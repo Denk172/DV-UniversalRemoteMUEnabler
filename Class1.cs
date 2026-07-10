@@ -39,15 +39,36 @@ namespace DV_UniversalRemoteMUEneabler
         }
         static void OnGUI(UnityModManager.ModEntry modEntry)
         {
-            GUILayout.Label("<b>Eneables remote control (MU) for locomotives:</b>");
-            GUILayout.Space(5);
+            GUILayout.Label("<b>Enable remote control (MU) for locomotives:</b>");
+            GUILayout.Space(10);
+            GUILayout.BeginHorizontal();
 
-            settings.DM3 = GUILayout.Toggle(settings.DM3, "DM3");
-            settings.S282 = GUILayout.Toggle(settings.S282, "S282");
-            settings.S060 = GUILayout.Toggle(settings.S060, "S060");
-            settings.BE2 = GUILayout.Toggle(settings.BE2, "BE2");
-            settings.DM1U = GUILayout.Toggle(settings.DM1U, "DM1U");
-            settings.MOD_LOCO = GUILayout.Toggle(settings.MOD_LOCO, "MOD_LOCO");
+            // DE/DH/DM
+            GUILayout.BeginVertical(GUILayout.Width(180));
+            GUILayout.Label("<b>Diesel & Mechanical</b>");
+            GUILayout.Space(5);
+            settings.DM3 = GUILayout.Toggle(settings.DM3, " DM3");
+            settings.DM1U = GUILayout.Toggle(settings.DM1U, " DM1U");
+            GUILayout.EndVertical();
+            GUILayout.Space(30);
+
+            // Steam
+            GUILayout.BeginVertical(GUILayout.Width(180));
+            GUILayout.Label("<b>Steam Locomotives</b>");
+            GUILayout.Space(5);
+            settings.S282 = GUILayout.Toggle(settings.S282, " S282");
+            settings.S060 = GUILayout.Toggle(settings.S060, " S060");
+            GUILayout.EndVertical();
+            GUILayout.Space(30);
+
+            // Other / Modded
+            GUILayout.BeginVertical(GUILayout.Width(200));
+            GUILayout.Label("<b>Electric & Custom</b>");
+            GUILayout.Space(5);
+            settings.BE2 = GUILayout.Toggle(settings.BE2, " BE2 (Battery)");
+            settings.MOD_LOCO = GUILayout.Toggle(settings.MOD_LOCO, " Custom Modded Locos");
+            GUILayout.EndVertical();
+            GUILayout.EndHorizontal();
         }
 
         static void OnSaveGUI(UnityModManager.ModEntry modEntry)
@@ -320,19 +341,17 @@ namespace DV_UniversalRemoteMUEneabler
             catch { }
         }
     }
-}
-
-
-public class YourModSettings : UnityModManager.ModSettings
-{
-    public bool DM3 = true;
-    public bool S282 = true;
-    public bool S060 = true;
-    public bool BE2 = true;
-    public bool DM1U = true;
-    public bool MOD_LOCO = true;
-    public override void Save(UnityModManager.ModEntry modEntry)
+    public class YourModSettings : UnityModManager.ModSettings
     {
-        Save(this, modEntry);
+        public bool DM3 = true;
+        public bool S282 = true;
+        public bool S060 = true;
+        public bool BE2 = true;
+        public bool DM1U = true;
+        public bool MOD_LOCO = true;
+        public override void Save(UnityModManager.ModEntry modEntry)
+        {
+            Save(this, modEntry);
+        }
     }
 }
