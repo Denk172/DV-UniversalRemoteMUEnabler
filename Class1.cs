@@ -43,7 +43,7 @@ namespace DV_UniversalRemoteMUEneabler
             GUILayout.Space(10);
             GUILayout.BeginHorizontal();
 
-            // DE/DH/DM
+            // DM
             GUILayout.BeginVertical(GUILayout.Width(180));
             GUILayout.Label("<b>Diesel & Mechanical</b>");
             GUILayout.Space(5);
