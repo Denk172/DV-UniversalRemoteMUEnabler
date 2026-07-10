@@ -84,7 +84,6 @@ namespace DV_UniversalRemoteMUEneabler
                 if (__instance == null) return;
 
                 bool ActivateRemoteMU = false;
-                string carTypeSTR = __instance.carType.ToString();
                 if (__instance.carType == TrainCarType.LocoDM3 && Main.settings.DM3)
                 {
                     ActivateRemoteMU = true;
@@ -106,40 +105,52 @@ namespace DV_UniversalRemoteMUEneabler
                 {
                     ActivateRemoteMU = true;
                 }
-                else if (__instance.carType == TrainCarType.LocoSteamHeavy && Main.settings.S282)
+                else if (Main.settings.MOD_LOCO && __instance.IsLoco)
                 {
                     ActivateRemoteMU = true;
                 }
-                else if (Main.settings.MOD_LOCO)
-                {
-                    if (__instance.IsLoco)
-                    {
-                        ActivateRemoteMU = true;
-                    }
-                }
+
                 if (ActivateRemoteMU)
                 {
                     if (__instance.muModule != null) return;
 
                     try
                     {
-                        Main.Logger.Log($"[Universal MU] Injecting MU module into: {__instance.carType}");
+                        Main.Logger.Log($"[Universal MU] Injecting core MU module into: {__instance.carType}");
 
-                        MultipleUnitModule muModule = __instance.gameObject.AddComponent<MultipleUnitModule>();
-                        __instance.muModule = muModule;
-
-                        if (__instance.frontCoupler != null)
+                        if (__instance.GetComponent<DummyMUFlag>() == null)
                         {
-                            muModule.frontCableAdapter = __instance.frontCoupler.gameObject.AddComponent<CouplingHoseMultipleUnitAdapter>();
+                            __instance.gameObject.AddComponent<DummyMUFlag>();
                         }
 
-                        if (__instance.rearCoupler != null)
+                        var frontAdapter = __instance.gameObject.AddComponent<CouplingHoseMultipleUnitAdapter>();
+                        var rearAdapter = __instance.gameObject.AddComponent<CouplingHoseMultipleUnitAdapter>();
+
+                        frontAdapter.gameObject.AddComponent<DummyMUFlag>();
+                        rearAdapter.gameObject.AddComponent<DummyMUFlag>();
+
+                        foreach (var f in typeof(CouplingHoseMultipleUnitAdapter).GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance))
                         {
-                            muModule.rearCableAdapter = __instance.rearCoupler.gameObject.AddComponent<CouplingHoseMultipleUnitAdapter>();
+                            if (f.FieldType.Name.Contains("Coupler"))
+                            {
+                                f.SetValue(frontAdapter, __instance.frontCoupler);
+                                f.SetValue(rearAdapter, __instance.rearCoupler);
+                            }
+                        }
+
+                        DV.MultipleUnit.MultipleUnitModule muModule = __instance.gameObject.AddComponent<DV.MultipleUnit.MultipleUnitModule>();
+                        __instance.muModule = muModule;
+
+                        foreach (var field in typeof(DV.MultipleUnit.MultipleUnitModule).GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance))
+                        {
+                            if (field.FieldType == typeof(CouplingHoseMultipleUnitAdapter))
+                            {
+                                if (field.Name.ToLower().Contains("front")) field.SetValue(muModule, frontAdapter);
+                                if (field.Name.ToLower().Contains("rear")) field.SetValue(muModule, rearAdapter);
+                            }
                         }
 
                         muModule.Initialize(__instance);
-
                         Main.Logger.Log($"[Universal MU] Successfully initialized MU module for: {__instance.carType}");
                     }
                     catch (System.Exception ex)
@@ -352,6 +363,67 @@ namespace DV_UniversalRemoteMUEneabler
         public override void Save(UnityModManager.ModEntry modEntry)
         {
             Save(this, modEntry);
+        }
+    }
+    public class DummyMUFlag : UnityEngine.MonoBehaviour { }
+
+    [HarmonyPatch(typeof(CouplingHoseMultipleUnitAdapter), "Start")]
+    public class MUAdapter_Start_Patch
+    {
+        public static bool Prefix(CouplingHoseMultipleUnitAdapter __instance)
+        {
+            return __instance.GetComponent<DummyMUFlag>() == null;
+        }
+    }
+
+    [HarmonyPatch(typeof(CouplingHoseMultipleUnitAdapter), "get_IsConnected")]
+    public class MUAdapter_IsConnected_Patch
+    {
+        public static bool Prefix(CouplingHoseMultipleUnitAdapter __instance, ref bool __result)
+        {
+            if (__instance.GetComponent<DummyMUFlag>() != null)
+            {
+                __result = false;
+                return false;
+            }
+            return true;
+        }
+    }
+
+    [HarmonyPatch(typeof(DV.MultipleUnit.MultipleUnitModule), "RestoreMultipleUnitStateAfterAutoCoupleCoro")]
+    public class MUModule_AutoCouple_Patch
+    {
+        public static bool Prefix(DV.MultipleUnit.MultipleUnitModule __instance)
+        {
+            return __instance.GetComponent<DummyMUFlag>() == null;
+        }
+    }
+
+    [HarmonyPatch(typeof(DV.MultipleUnit.MultipleUnitCable), "Connect", new System.Type[] { typeof(DV.MultipleUnit.MultipleUnitCable), typeof(bool) })]
+    public class MUCable_Connect_Patch
+    {
+        public static bool Prefix(object __instance)
+        {
+            if (__instance == null) return true;
+            foreach (var field in __instance.GetType().GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance))
+            {
+                if (field.FieldType == typeof(TrainCar))
+                {
+                    var tc = field.GetValue(__instance) as TrainCar;
+                    if (tc != null && tc.GetComponent<DummyMUFlag>() != null) return false;
+                }
+                else if (field.FieldType == typeof(DV.MultipleUnit.MultipleUnitModule))
+                {
+                    var mod = field.GetValue(__instance) as DV.MultipleUnit.MultipleUnitModule;
+                    if (mod != null && mod.GetComponent<DummyMUFlag>() != null) return false;
+                }
+                else if (field.FieldType == typeof(CouplingHoseMultipleUnitAdapter))
+                {
+                    var ad = field.GetValue(__instance) as CouplingHoseMultipleUnitAdapter;
+                    if (ad != null && ad.GetComponent<DummyMUFlag>() != null) return false;
+                }
+            }
+            return true;
         }
     }
 }

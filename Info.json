@@ -2,7 +2,7 @@
   "Id": "DV_UniversalRemoteMUEneabler",
   "DisplayName": "Universal Remote MU Enabler",
   "Author": "Denk172",
-  "Version": "2.1.4",
+  "Version": "2.2",
   "ManagerVersion": "0.27.3",
   "AssemblyName": "DV_UniversalRemoteMUEneabler.dll",
   "EntryMethod": "DV_UniversalRemoteMUEneabler.Main.Load"
