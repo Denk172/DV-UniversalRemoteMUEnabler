@@ -12,12 +12,14 @@ using System.Linq;
 using System.Reflection;
 using UnityEngine;
 using UnityModManagerNet;
+
 namespace DV_UniversalRemoteMUEneabler
 {
     public static class Main
     {
         public static UnityModManager.ModEntry.ModLogger Logger;
         public static YourModSettings settings;
+
         public static bool Load(UnityModManager.ModEntry modEntry)
         {
             Logger = modEntry.Logger;
@@ -29,14 +31,23 @@ namespace DV_UniversalRemoteMUEneabler
                 var harmony = new Harmony(modEntry.Info.Id);
                 harmony.PatchAll(Assembly.GetExecutingAssembly());
             }
-            catch
-            (Exception ex)
+            catch (Exception ex)
             {
                 Logger.Error($"Failed Harmony patching: {ex.Message}");
                 return false;
             }
             return true;
         }
+
+        // Pomocná metoda pro čistý log - vypíše info jen pokud je to povolené v nastavení
+        public static void DebugLog(string message)
+        {
+            if (settings != null && settings.enableDebugLog)
+            {
+                Logger.Log(message);
+            }
+        }
+
         static void OnGUI(UnityModManager.ModEntry modEntry)
         {
             GUILayout.Label("<b>Enable remote control (MU) for locomotives:</b>");
@@ -69,6 +80,17 @@ namespace DV_UniversalRemoteMUEneabler
             settings.MOD_LOCO = GUILayout.Toggle(settings.MOD_LOCO, " Custom Modded Locos");
             GUILayout.EndVertical();
             GUILayout.EndHorizontal();
+
+            GUILayout.Space(20);
+
+            // Debug Sekce
+            GUILayout.BeginHorizontal();
+            GUILayout.BeginVertical();
+            GUILayout.Label("<b>Advanced / Debug:</b>");
+            GUILayout.Space(5);
+            settings.enableDebugLog = GUILayout.Toggle(settings.enableDebugLog, " Enable Debug Logging (Spams the log, use only for troubleshooting)");
+            GUILayout.EndVertical();
+            GUILayout.EndHorizontal();
         }
 
         static void OnSaveGUI(UnityModManager.ModEntry modEntry)
@@ -87,7 +109,10 @@ namespace DV_UniversalRemoteMUEneabler
                 if (__instance.carType == TrainCarType.LocoDM3 && Main.settings.DM3)
                 {
                     ActivateRemoteMU = true;
-                    __instance.gameObject.AddComponent<DM3GearboxSync>();
+                    if (__instance.GetComponent<DM3GearboxSync>() == null)
+                    {
+                        __instance.gameObject.AddComponent<DM3GearboxSync>();
+                    }
                 }
                 else if (__instance.carType == TrainCarType.LocoSteamHeavy && Main.settings.S282)
                 {
@@ -116,7 +141,7 @@ namespace DV_UniversalRemoteMUEneabler
 
                     try
                     {
-                        Main.Logger.Log($"[Universal MU] Injecting core MU module into: {__instance.carType}");
+                        Main.DebugLog($"[Universal MU] Injecting core MU module into: {__instance.carType}");
 
                         if (__instance.GetComponent<DummyMUFlag>() == null)
                         {
@@ -151,11 +176,11 @@ namespace DV_UniversalRemoteMUEneabler
                         }
 
                         muModule.Initialize(__instance);
-                        Main.Logger.Log($"[Universal MU] Successfully initialized MU module for: {__instance.carType}");
+                        Main.DebugLog($"[Universal MU] Successfully initialized MU module for: {__instance.carType}");
                     }
                     catch (System.Exception ex)
                     {
-                        Main.Logger.Log($"[Universal MU] ERROR INSTALLING MU for {__instance.carType}: {ex.Message}\n{ex.StackTrace}");
+                        Main.Logger.Error($"[Universal MU] ERROR INSTALLING MU for {__instance.carType}: {ex.Message}\n{ex.StackTrace}");
                     }
                 }
             }
@@ -174,6 +199,9 @@ namespace DV_UniversalRemoteMUEneabler
         private int cachedCarCount = -1;
         private TrainCar lastMasterCar = null;
 
+        private int cachedMUConnections = -1;
+        private TrainCar lastPlayerCar = null;
+
         private class FastSyncPair
         {
             public System.Reflection.FieldInfo field;
@@ -185,7 +213,91 @@ namespace DV_UniversalRemoteMUEneabler
         void Start()
         {
             trainCar = GetComponent<TrainCar>();
-            Main.Logger.Log("[DM3 v2.0.25] Script attached to locomotive: " + (trainCar != null ? trainCar.ID : "Unknown"));
+            Main.DebugLog("[DM3 v2.0.25] Script attached to locomotive: " + (trainCar != null ? trainCar.ID : "Unknown"));
+
+            if (trainCar != null)
+            {
+                StartCoroutine(DM3CableExtension.TryInstallCablesCoroutine(trainCar));
+            }
+        }
+
+        private static bool CheckOneWayMUConnection(TrainCar carA, TrainCar carB)
+        {
+            if (carA == null || carB == null) return false;
+
+            var comps = carA.GetComponentsInChildren<UnityEngine.Component>(true);
+            foreach (var comp in comps)
+            {
+                if (comp == null) continue;
+
+                string tName = comp.GetType().Name;
+                if (!tName.Contains("Cable") && !tName.Contains("Adapter") && !tName.Contains("Hose") && !tName.Contains("MultipleUnit"))
+                    continue;
+
+                var type = comp.GetType();
+
+                var fields = type.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                foreach (var f in fields)
+                {
+                    object val = null;
+                    try { val = f.GetValue(comp); } catch { }
+                    if (val is UnityEngine.Component targetComp && targetComp != null)
+                    {
+                        var targetCar = targetComp.GetComponentInParent<TrainCar>();
+                        if (targetCar == carB) return true;
+                    }
+                }
+
+                var props = type.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                foreach (var p in props)
+                {
+                    if (!p.CanRead || p.GetIndexParameters().Length > 0) continue;
+                    object val = null;
+                    try { val = p.GetValue(comp, null); } catch { }
+                    if (val is UnityEngine.Component targetComp && targetComp != null)
+                    {
+                        var targetCar = targetComp.GetComponentInParent<TrainCar>();
+                        if (targetCar == carB) return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        private static bool IsMUConnected(TrainCar carA, TrainCar carB)
+        {
+            if (carA == null || carB == null || carA == carB) return false;
+            return CheckOneWayMUConnection(carA, carB) || CheckOneWayMUConnection(carB, carA);
+        }
+
+        private System.Collections.Generic.List<TrainCar> GetCabledDM3Chain(TrainCar startCar)
+        {
+            var result = new System.Collections.Generic.List<TrainCar>();
+            if (startCar == null || startCar.trainset == null) return result;
+
+            var visited = new System.Collections.Generic.HashSet<TrainCar>();
+            var queue = new System.Collections.Generic.Queue<TrainCar>();
+
+            queue.Enqueue(startCar);
+            visited.Add(startCar);
+
+            while (queue.Count > 0)
+            {
+                var current = queue.Dequeue();
+                result.Add(current);
+
+                foreach (var car in startCar.trainset.cars)
+                {
+                    if (car == null || visited.Contains(car) || !car.carType.ToString().Contains("DM3")) continue;
+
+                    if (IsMUConnected(current, car))
+                    {
+                        visited.Add(car);
+                        queue.Enqueue(car);
+                    }
+                }
+            }
+            return result;
         }
 
         void Update()
@@ -200,7 +312,7 @@ namespace DV_UniversalRemoteMUEneabler
                     if (comp != null && comp.GetType() != typeof(DM3GearboxSync) && comp.GetType().Name.Contains("SimController"))
                     {
                         simController = comp;
-                        Main.Logger.Log("[DM3 v2.0.25] SimController linked for " + trainCar.ID);
+                        Main.DebugLog("[DM3 v2.0.25] SimController linked for " + trainCar.ID);
                         break;
                     }
                 }
@@ -211,7 +323,7 @@ namespace DV_UniversalRemoteMUEneabler
             var trainset = trainCar.trainset;
             if (trainset == null || trainset.cars == null || trainset.cars.Count <= 1) return;
 
-            TrainCar masterCar = null;
+            TrainCar currentPlayerCar = null;
             if (cachedPlayerManagerType == null)
             {
                 foreach (var assembly in System.AppDomain.CurrentDomain.GetAssemblies())
@@ -236,38 +348,53 @@ namespace DV_UniversalRemoteMUEneabler
 
             if (playerCarProp != null)
             {
-                try { masterCar = playerCarProp.GetValue(null) as TrainCar; } catch { }
+                try { currentPlayerCar = playerCarProp.GetValue(null) as TrainCar; } catch { }
             }
 
-            if (masterCar == null || !trainset.cars.Contains(masterCar) || !masterCar.carType.ToString().Contains("DM3"))
+            if (currentPlayerCar != lastPlayerCar)
             {
-                foreach (var car in trainset.cars)
-                {
-                    if (car != null && car.carType.ToString().Contains("DM3")) { masterCar = car; break; }
-                }
+                lastPlayerCar = currentPlayerCar;
+                cachedMUConnections = -1;
             }
+
+            var chain = GetCabledDM3Chain(trainCar);
+            if (chain.Count <= 1)
+            {
+                if (cachedMUConnections != 0)
+                {
+                    fastPairs.Clear();
+                    cachedMUConnections = 0;
+                }
+                return;
+            }
+
+            chain = chain.OrderBy(c => c.ID).ToList();
+            TrainCar masterCar = (currentPlayerCar != null && chain.Contains(currentPlayerCar)) ? currentPlayerCar : chain[0];
 
             if (masterCar == null) return;
             if (trainCar != masterCar) return;
 
-            if (trainset.cars.Count != cachedCarCount || masterCar != lastMasterCar)
+            int currentMUConnections = chain.Count - 1;
+
+            if (chain.Count != cachedCarCount || masterCar != lastMasterCar || currentMUConnections != cachedMUConnections)
             {
-                cachedCarCount = trainset.cars.Count;
+                cachedCarCount = chain.Count;
                 lastMasterCar = masterCar;
+                cachedMUConnections = currentMUConnections;
                 fastPairs.Clear();
 
-                for (int i = 0; i < trainset.cars.Count; i++)
+                for (int i = 0; i < chain.Count; i++)
                 {
-                    var car = trainset.cars[i];
-                    if (car == trainCar || car == null || !car.carType.ToString().Contains("DM3")) continue;
+                    var slaveCar = chain[i];
+                    if (slaveCar == masterCar || slaveCar == null) continue;
 
-                    var slaveSync = car.GetComponent<DM3GearboxSync>();
+                    var slaveSync = slaveCar.GetComponent<DM3GearboxSync>();
                     if (slaveSync == null || slaveSync.simController == null) continue;
 
                     BuildFastCache(simController, slaveSync.simController, 0);
                 }
 
-                Main.Logger.Log("[DM3 v2.0.25] Sync cache rebuilt. Cached " + fastPairs.Count + " fields.");
+                Main.DebugLog($"[DM3 v2.0.25] Sync cache rebuilt for {masterCar.ID}. Synchronizing {currentMUConnections} cabled DM3(s). Cached {fastPairs.Count} fields.");
             }
 
             for (int i = 0; i < fastPairs.Count; i++)
@@ -352,6 +479,7 @@ namespace DV_UniversalRemoteMUEneabler
             catch { }
         }
     }
+
     public class YourModSettings : UnityModManager.ModSettings
     {
         public bool DM3 = true;
@@ -360,11 +488,16 @@ namespace DV_UniversalRemoteMUEneabler
         public bool BE2 = true;
         public bool DM1U = true;
         public bool MOD_LOCO = true;
+
+        // Debug toggle
+        public bool enableDebugLog = false;
+
         public override void Save(UnityModManager.ModEntry modEntry)
         {
             Save(this, modEntry);
         }
     }
+
     public class DummyMUFlag : UnityEngine.MonoBehaviour { }
 
     [HarmonyPatch(typeof(CouplingHoseMultipleUnitAdapter), "Start")]
@@ -404,26 +537,173 @@ namespace DV_UniversalRemoteMUEneabler
     {
         public static bool Prefix(object __instance)
         {
-            if (__instance == null) return true;
-            foreach (var field in __instance.GetType().GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance))
+            // ZDE BYL TEN PROBLÉM - TÍMTO JE KABEL OPĚT ODBLOKOVÁN
+            return true;
+        }
+    }
+
+    public static class DM3CableExtension
+    {
+        private static GameObject muCablePrefab;
+
+        public static Vector3 FrontCableOffset = new Vector3(0.4f, 0.05f, -0.45f);
+        public static Vector3 RearCableOffset = new Vector3(0.4f, 0.05f, -0.45f);
+
+        public static System.Collections.IEnumerator TryInstallCablesCoroutine(TrainCar dm3)
+        {
+            if (dm3 == null) yield break;
+
+            yield return new UnityEngine.WaitForSeconds(1.0f);
+
+            int attempts = 0;
+            while (dm3 != null && attempts < 15)
             {
-                if (field.FieldType == typeof(TrainCar))
+                bool frontExists = dm3.frontCoupler != null && dm3.frontCoupler.transform.Find("MUCable_Front") != null;
+                bool rearExists = dm3.rearCoupler != null && dm3.rearCoupler.transform.Find("MUCable_Rear") != null;
+
+                if (frontExists && rearExists) yield break;
+
+                if (muCablePrefab == null)
                 {
-                    var tc = field.GetValue(__instance) as TrainCar;
-                    if (tc != null && tc.GetComponent<DummyMUFlag>() != null) return false;
+                    FindAndCacheCablePrefab();
                 }
-                else if (field.FieldType == typeof(DV.MultipleUnit.MultipleUnitModule))
+
+                if (muCablePrefab != null)
                 {
-                    var mod = field.GetValue(__instance) as DV.MultipleUnit.MultipleUnitModule;
-                    if (mod != null && mod.GetComponent<DummyMUFlag>() != null) return false;
+                    AttachCablesAndInitializeMU(dm3);
+                    yield break;
                 }
-                else if (field.FieldType == typeof(CouplingHoseMultipleUnitAdapter))
+
+                attempts++;
+                yield return new UnityEngine.WaitForSeconds(1.0f);
+            }
+        }
+
+        private static void FindAndCacheCablePrefab()
+        {
+            if (muCablePrefab != null) return;
+
+            try
+            {
+                var allAdapters = UnityEngine.Resources.FindObjectsOfTypeAll<CouplingHoseMultipleUnitAdapter>();
+                foreach (var adapter in allAdapters)
                 {
-                    var ad = field.GetValue(__instance) as CouplingHoseMultipleUnitAdapter;
-                    if (ad != null && ad.GetComponent<DummyMUFlag>() != null) return false;
+                    if (adapter != null && adapter.GetComponent<DummyMUFlag>() == null)
+                    {
+                        var parentCar = adapter.GetComponentInParent<TrainCar>();
+                        if (parentCar != null && parentCar.carType == TrainCarType.LocoDM3) continue;
+
+                        muCablePrefab = adapter.gameObject;
+                        Main.DebugLog("[DM3 Cable] SUCCESS: Cached native MU cable prefab!");
+                        return;
+                    }
                 }
             }
-            return true;
+            catch (System.Exception ex)
+            {
+                Main.Logger.Error($"[DM3 Cable] Error caching prefab: {ex.Message}");
+            }
+        }
+
+        private static void AttachCablesAndInitializeMU(TrainCar dm3)
+        {
+            if (muCablePrefab == null || dm3 == null) return;
+
+            CouplingHoseMultipleUnitAdapter frontAdapter = null;
+            CouplingHoseMultipleUnitAdapter rearAdapter = null;
+
+            if (dm3.frontCoupler != null)
+            {
+                Transform existing = dm3.frontCoupler.transform.Find("MUCable_Front");
+                GameObject frontObj = existing != null ? existing.gameObject : UnityEngine.Object.Instantiate(muCablePrefab, dm3.frontCoupler.transform);
+                frontObj.name = "MUCable_Front";
+                frontObj.transform.localPosition = FrontCableOffset;
+                frontObj.transform.localRotation = Quaternion.identity;
+                frontObj.SetActive(true);
+
+                frontAdapter = frontObj.GetComponent<CouplingHoseMultipleUnitAdapter>();
+                FixChildReferences(frontObj, dm3, dm3.frontCoupler, frontAdapter);
+            }
+
+            if (dm3.rearCoupler != null)
+            {
+                Transform existing = dm3.rearCoupler.transform.Find("MUCable_Rear");
+                GameObject rearObj = existing != null ? existing.gameObject : UnityEngine.Object.Instantiate(muCablePrefab, dm3.rearCoupler.transform);
+                rearObj.name = "MUCable_Rear";
+                rearObj.transform.localPosition = RearCableOffset;
+                rearObj.transform.localRotation = Quaternion.identity;
+                rearObj.SetActive(true);
+
+                rearAdapter = rearObj.GetComponent<CouplingHoseMultipleUnitAdapter>();
+                FixChildReferences(rearObj, dm3, dm3.rearCoupler, rearAdapter);
+            }
+
+            DV.MultipleUnit.MultipleUnitModule muModule = dm3.GetComponent<DV.MultipleUnit.MultipleUnitModule>();
+            if (muModule == null)
+            {
+                muModule = dm3.gameObject.AddComponent<DV.MultipleUnit.MultipleUnitModule>();
+            }
+            dm3.muModule = muModule;
+
+            var moduleFields = typeof(DV.MultipleUnit.MultipleUnitModule).GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            foreach (var f in moduleFields)
+            {
+                if (f.FieldType == typeof(CouplingHoseMultipleUnitAdapter))
+                {
+                    string nameLower = f.Name.ToLower();
+                    if (nameLower.Contains("front") && frontAdapter != null) f.SetValue(muModule, frontAdapter);
+                    if (nameLower.Contains("rear") && rearAdapter != null) f.SetValue(muModule, rearAdapter);
+                }
+            }
+
+            try
+            {
+                muModule.Initialize(dm3);
+                Main.DebugLog($"[DM3 Cable] SUCCESS: MU Module and Cables successfully initialized on DM3 ({dm3.ID})");
+            }
+            catch (System.Exception ex)
+            {
+                Main.Logger.Error($"[DM3 Cable] MU Module init note: {ex.Message}");
+            }
+        }
+
+        private static void FixChildReferences(GameObject cableObj, TrainCar car, Coupler coupler, CouplingHoseMultipleUnitAdapter adapter)
+        {
+            if (cableObj == null) return;
+
+            if (adapter != null)
+            {
+                var adapterFields = adapter.GetType().GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                foreach (var f in adapterFields)
+                {
+                    if (f.FieldType.Name.Contains("Coupler"))
+                    {
+                        f.SetValue(adapter, coupler);
+                    }
+                }
+            }
+
+            foreach (var comp in cableObj.GetComponentsInChildren<UnityEngine.Component>(true))
+            {
+                if (comp == null) continue;
+
+                var fields = comp.GetType().GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                foreach (var f in fields)
+                {
+                    if (f.FieldType == typeof(TrainCar))
+                    {
+                        f.SetValue(comp, car);
+                    }
+                    else if (f.FieldType.Name.Contains("Coupler"))
+                    {
+                        f.SetValue(comp, coupler);
+                    }
+                    else if (f.FieldType == typeof(CouplingHoseMultipleUnitAdapter))
+                    {
+                        if (adapter != null) f.SetValue(comp, adapter);
+                    }
+                }
+            }
         }
     }
 }
