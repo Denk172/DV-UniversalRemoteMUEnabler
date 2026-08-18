@@ -108,6 +108,15 @@ namespace DV_UniversalRemoteMUEneabler
 
                 if (carTypeName.Contains("handcar")) return;
 
+                // FIX: Ignorovat mašiny, které už mají MU kabel z vanilly (DE2 = locoshunter, DH4, DE6, Slug)
+                if (carTypeName == "locoshunter" || carTypeName.Contains("de2") ||
+                    carTypeName.Contains("dh4") ||
+                    carTypeName.Contains("de6") ||
+                    carTypeName.Contains("slug"))
+                {
+                    return;
+                }
+
                 bool ActivateRemoteMU = false;
                 if (__instance.carType == TrainCarType.LocoDM3 && Main.settings.DM3)
                 {
@@ -502,7 +511,6 @@ namespace DV_UniversalRemoteMUEneabler
 
     public class DummyMUFlag : UnityEngine.MonoBehaviour { }
 
-    
     [HarmonyPatch(typeof(DV.MultipleUnit.MultipleUnitCable), "Connect", new System.Type[] { typeof(DV.MultipleUnit.MultipleUnitCable), typeof(bool) })]
     public class MUCable_Connect_Patch
     {
@@ -512,7 +520,7 @@ namespace DV_UniversalRemoteMUEneabler
             {
                 Main.DebugLog($"[Universal Cable] Ignored native MU connect crash (typical for steam locos): {__exception.Message}");
             }
-            return null; 
+            return null;
         }
     }
 
@@ -537,6 +545,13 @@ namespace DV_UniversalRemoteMUEneabler
             if (car == null) yield break;
 
             yield return new UnityEngine.WaitForSeconds(1.0f);
+
+            // FIX: Zkontroluje, jestli už mašina nemá originální vanillový kabel
+            var existingAdapters = car.GetComponentsInChildren<CouplingHoseMultipleUnitAdapter>(true);
+            if (existingAdapters.Any(a => a.GetComponent<DummyMUFlag>() == null))
+            {
+                yield break;
+            }
 
             int attempts = 0;
             while (car != null && attempts < 15)
@@ -591,12 +606,12 @@ namespace DV_UniversalRemoteMUEneabler
         private static void AttachCablesAndInitializeMU(TrainCar car)
         {
             if (muCablePrefab == null || car == null) return;
-            // DEFAULT OFFSETS
-            Vector3 frontOffset = new Vector3(0.4f, 0.05f, -0.45f); 
+
+            Vector3 frontOffset = new Vector3(0.4f, 0.05f, -0.45f);
             Vector3 rearOffset = new Vector3(0.4f, 0.05f, -0.45f);
-            // DEFAULT ROTATIONS
-            Vector3 frontRotation = Vector3.zero; 
-            Vector3 rearRotation = Vector3.zero;  
+
+            Vector3 frontRotation = Vector3.zero;
+            Vector3 rearRotation = Vector3.zero;
 
             string typeName = car.carType.ToString().ToLower();
 
@@ -606,7 +621,7 @@ namespace DV_UniversalRemoteMUEneabler
                     frontOffset = new Vector3(0.4f, 0.05f, -0.45f);
                     rearOffset = new Vector3(0.4f, 0.05f, -0.45f);
                     break;
-                case TrainCarType.LocoMicroshunter: // BE2
+                case TrainCarType.LocoMicroshunter:
                     frontOffset = new Vector3(0.4f, -0.01f, -0.45f);
                     rearOffset = new Vector3(0.4f, -0.01f, -0.45f);
                     break;
@@ -614,7 +629,7 @@ namespace DV_UniversalRemoteMUEneabler
                     frontOffset = new Vector3(0.4f, 0.05f, -0.45f);
                     rearOffset = new Vector3(0.4f, 0.05f, -0.45f);
                     break;
-                case TrainCarType.LocoSteamHeavy: // S282
+                case TrainCarType.LocoSteamHeavy:
                     frontOffset = new Vector3(0.4f, -0.1f, -0.47f);
                     rearOffset = new Vector3(0.4f, 0.1f, -0.21f);
                     frontRotation = new Vector3(0f, 12f, 0f);
