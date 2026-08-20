@@ -104,14 +104,22 @@ namespace DV_UniversalRemoteMUEneabler
             {
                 if (__instance == null) return;
 
+                // Pokud mašina už má nativní vanillový MU modul, vůbec na ni nesahat
+                if (__instance.muModule != null && __instance.GetComponent<DummyMUFlag>() == null)
+                {
+                    return;
+                }
+
                 string carTypeName = __instance.carType.ToString().ToLower();
 
                 if (carTypeName.Contains("handcar")) return;
 
-                // FIX: Ignorovat mašiny, které už mají MU kabel z vanilly (DE2 = locoshunter, DH4, DE6, Slug)
-                if (carTypeName == "locoshunter" || carTypeName.Contains("de2") ||
-                    carTypeName.Contains("dh4") ||
+                // FIX: DE6 je v kódu hry 'locodiesel', DE2 je 'locoshunter'
+                if (carTypeName == "locoshunter" ||
+                    carTypeName == "locodiesel" ||
+                    carTypeName.Contains("de2") ||
                     carTypeName.Contains("de6") ||
+                    carTypeName.Contains("dh4") ||
                     carTypeName.Contains("slug"))
                 {
                     return;
@@ -546,7 +554,7 @@ namespace DV_UniversalRemoteMUEneabler
 
             yield return new UnityEngine.WaitForSeconds(1.0f);
 
-            // FIX: Zkontroluje, jestli už mašina nemá originální vanillový kabel
+            // Zkontroluje, jestli už mašina nemá originální vanillový kabel
             var existingAdapters = car.GetComponentsInChildren<CouplingHoseMultipleUnitAdapter>(true);
             if (existingAdapters.Any(a => a.GetComponent<DummyMUFlag>() == null))
             {
