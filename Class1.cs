@@ -64,34 +64,43 @@ namespace DV_UniversalRemoteMUEneabler
 
         static void OnGUI(UnityModManager.ModEntry modEntry)
         {
-            GUILayout.Label("<b>Enable remote control (MU) for locomotives:</b>");
+            GUILayout.Label("<b>Enable remote control (MU) for vehicles:</b>");
             GUILayout.Space(10);
             GUILayout.BeginHorizontal();
 
             // DM
-            GUILayout.BeginVertical(GUILayout.Width(180));
+            GUILayout.BeginVertical(GUILayout.Width(160));
             GUILayout.Label("<b>Diesel & Mechanical</b>");
             GUILayout.Space(5);
             settings.DM3 = GUILayout.Toggle(settings.DM3, " DM3");
             settings.DM1U = GUILayout.Toggle(settings.DM1U, " DM1U");
             GUILayout.EndVertical();
-            GUILayout.Space(30);
+            GUILayout.Space(20);
 
             // Steam
-            GUILayout.BeginVertical(GUILayout.Width(180));
+            GUILayout.BeginVertical(GUILayout.Width(160));
             GUILayout.Label("<b>Steam Locomotives</b>");
             GUILayout.Space(5);
-            settings.S282 = GUILayout.Toggle(settings.S282, " S282");
+            settings.S282 = GUILayout.Toggle(settings.S282, " S282 (+ Tender)");
             settings.S060 = GUILayout.Toggle(settings.S060, " S060");
             GUILayout.EndVertical();
-            GUILayout.Space(30);
+            GUILayout.Space(20);
 
-            // Other / Modded
-            GUILayout.BeginVertical(GUILayout.Width(200));
+            // Electric & Custom
+            GUILayout.BeginVertical(GUILayout.Width(170));
             GUILayout.Label("<b>Electric & Custom</b>");
             GUILayout.Space(5);
             settings.BE2 = GUILayout.Toggle(settings.BE2, " BE2 (Battery)");
             settings.MOD_LOCO = GUILayout.Toggle(settings.MOD_LOCO, " Custom Modded Locos");
+            GUILayout.EndVertical();
+            GUILayout.Space(20);
+
+            // Rolling Stock / Utility
+            GUILayout.BeginVertical(GUILayout.Width(180));
+            GUILayout.Label("<b>Rolling Stock & Utility</b>");
+            GUILayout.Space(5);
+            settings.Caboose = GUILayout.Toggle(settings.Caboose, " Caboose");
+            settings.UtilityFlatcar = GUILayout.Toggle(settings.UtilityFlatcar, " Utility Short Flatcar");
             GUILayout.EndVertical();
             GUILayout.EndHorizontal();
 
@@ -160,6 +169,14 @@ namespace DV_UniversalRemoteMUEneabler
                     ActivateRemoteMU = true;
                 }
                 else if (__instance.carType == TrainCarType.LocoDM1U && Main.settings.DM1U)
+                {
+                    ActivateRemoteMU = true;
+                }
+                else if (carTypeName.Contains("caboose") && Main.settings.Caboose)
+                {
+                    ActivateRemoteMU = true;
+                }
+                else if ((__instance.carType == TrainCarType.FlatbedShort || (carTypeName.Contains("flat") && carTypeName.Contains("short")) || carTypeName.Contains("utility")) && Main.settings.UtilityFlatcar)
                 {
                     ActivateRemoteMU = true;
                 }
@@ -337,13 +354,9 @@ namespace DV_UniversalRemoteMUEneabler
 
         public static void OnCableDisconnected(DV.MultipleUnit.MultipleUnitCable cable)
         {
-            // OCHRANA 1: Příznak ukončování aplikace
             if (isQuitting) return;
-
-            // OCHRANA 2: Probíhající auto-reconnect
             if (UniversalMUCableInstaller.isAutoReconnecting) return;
 
-            // OCHRANA 3: Kontrola call stacku – pokud odpojení volá úklid scény / OnDestroy / SceneSwitcher, IGNOROVAT!
             var stack = new StackTrace(false);
             for (int i = 0; i < stack.FrameCount; i++)
             {
@@ -670,6 +683,8 @@ namespace DV_UniversalRemoteMUEneabler
         public bool BE2 = true;
         public bool DM1U = true;
         public bool MOD_LOCO = true;
+        public bool Caboose = true;
+        public bool UtilityFlatcar = true;
 
         public bool enableDebugLog = false;
 
@@ -700,7 +715,7 @@ namespace DV_UniversalRemoteMUEneabler
         {
             if (__exception != null)
             {
-                Main.DebugLog($"[Universal Cable] Ignored native MU connect crash (typical for steam locos): {__exception.Message}");
+                Main.DebugLog($"[Universal Cable] Ignored native MU connect crash: {__exception.Message}");
             }
             return null;
         }
@@ -729,6 +744,11 @@ namespace DV_UniversalRemoteMUEneabler
             if (trainCar != null)
             {
                 StartCoroutine(UniversalMUCableInstaller.TryInstallCablesCoroutine(trainCar));
+
+                if (trainCar.carType == TrainCarType.LocoSteamHeavy)
+                {
+                    StartCoroutine(UniversalMUCableInstaller.MonitorS282TenderConnectionCoroutine(trainCar));
+                }
             }
         }
     }
@@ -820,6 +840,7 @@ namespace DV_UniversalRemoteMUEneabler
             {
                 case TrainCarType.LocoDM3:
                 case TrainCarType.LocoS060:
+                case TrainCarType.FlatbedShort:
                     frontOffset = new Vector3(0.4f, 0.05f, -0.45f);
                     rearOffset = new Vector3(0.4f, 0.05f, -0.45f);
                     break;
@@ -841,6 +862,11 @@ namespace DV_UniversalRemoteMUEneabler
                     {
                         frontOffset = new Vector3(0.5f, 0.15f, -0.05f);
                         rearOffset = new Vector3(0.3f, 0.05f, -0.45f);
+                    }
+                    else if (typeName.Contains("flat") || typeName.Contains("caboose") || typeName.Contains("utility"))
+                    {
+                        frontOffset = new Vector3(0.4f, 0.05f, -0.45f);
+                        rearOffset = new Vector3(0.4f, 0.05f, -0.45f);
                     }
                     break;
             }
@@ -944,6 +970,58 @@ namespace DV_UniversalRemoteMUEneabler
             Main.Logger.Log($"[Universal Cable] [{car.ID}] AutoReconnect loop finished.");
         }
 
+        public static System.Collections.IEnumerator MonitorS282TenderConnectionCoroutine(TrainCar s282Car)
+        {
+            yield return new UnityEngine.WaitForSeconds(5.0f);
+
+            while (s282Car != null)
+            {
+                yield return new UnityEngine.WaitForSeconds(3.0f);
+
+                if (s282Car == null || !s282Car.gameObject.activeInHierarchy) continue;
+
+                Coupler rearCoupler = s282Car.rearCoupler;
+                if (rearCoupler == null || rearCoupler.coupledTo == null) continue;
+
+                Coupler otherCoupler = rearCoupler.coupledTo;
+                TrainCar tenderCar = otherCoupler.GetComponentInParent<TrainCar>();
+                if (tenderCar == null) continue;
+
+                string otherTypeName = tenderCar.carType.ToString().ToLower();
+                string otherSide = GetCouplerSide(tenderCar, otherCoupler);
+
+                if (otherTypeName.Contains("tender") && otherSide == "front")
+                {
+                    var myAdapter = FindAdapterNearCoupler(s282Car, rearCoupler);
+                    var tenderAdapter = FindAdapterNearCoupler(tenderCar, otherCoupler);
+                    if (myAdapter == null || tenderAdapter == null) continue;
+
+                    var myCable = GetCableFromAdapter(myAdapter);
+                    var tenderCable = GetCableFromAdapter(tenderAdapter);
+                    if (myCable == null || tenderCable == null) continue;
+
+                    if (!AreCablesConnectedTogether(myCable, tenderCable))
+                    {
+                        try
+                        {
+                            Main.DebugLog($"[Universal Cable] Auto-linking S282 and Tender gangway MU cables...");
+                            isAutoReconnecting = true;
+                            myCable.Connect(tenderCable, false);
+                            Main.Logger.Log($"[Universal Cable] Automatically connected S282 gangway to Tender ({tenderCar.ID}).");
+                        }
+                        catch (System.Exception ex)
+                        {
+                            Main.DebugLog($"[Universal Cable] Note during S282-Tender auto-link: {ex.Message}");
+                        }
+                        finally
+                        {
+                            isAutoReconnecting = false;
+                        }
+                    }
+                }
+            }
+        }
+
         private static bool ProcessCouplerConnection(TrainCar car, Coupler coupler, string side, int attempt)
         {
             if (coupler == null) return true;
@@ -960,8 +1038,12 @@ namespace DV_UniversalRemoteMUEneabler
             string otherSide = GetCouplerSide(otherCar, otherCoupler);
             string connectionKey = CableStateManager.GetConnectionKey(car, side, otherCar, otherSide);
 
+            bool isS282LocoAndTender =
+                (car.carType == TrainCarType.LocoSteamHeavy && side == "rear" && otherCar.carType.ToString().ToLower().Contains("tender") && otherSide == "front") ||
+                (car.carType.ToString().ToLower().Contains("tender") && side == "front" && otherCar.carType == TrainCarType.LocoSteamHeavy && otherSide == "rear");
+
             bool isSaved = CableStateManager.IsConnectionSaved(connectionKey);
-            if (!isSaved)
+            if (!isSaved && !isS282LocoAndTender)
             {
                 if (attempt >= 2)
                 {
@@ -1001,7 +1083,7 @@ namespace DV_UniversalRemoteMUEneabler
             try
             {
                 isAutoReconnecting = true;
-                Main.Logger.Log($"[Universal Cable] [{car.ID}] Restoring saved connection {side} -> {otherCar.ID}...");
+                Main.Logger.Log($"[Universal Cable] [{car.ID}] Restoring connection {side} -> {otherCar.ID}...");
                 myCable.Connect(otherCable, false);
                 Main.Logger.Log($"[Universal Cable] [{car.ID}] SUCCESS: Cables connected to {otherCar.ID}!");
                 return true;
