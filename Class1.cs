@@ -36,14 +36,19 @@ namespace DV_UniversalRemoteMUEneabler
                 var harmony = new Harmony(modEntry.Info.Id);
                 harmony.PatchAll(Assembly.GetExecutingAssembly());
 
-                var disconnectMethod = typeof(DV.MultipleUnit.MultipleUnitCable)
-                    .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                    .FirstOrDefault(m => m.Name == "Disconnect");
-
-                if (disconnectMethod != null)
+                var updateMethod = typeof(DV.MultipleUnit.MultipleUnitModule).GetMethod("Update", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (updateMethod != null)
                 {
-                    harmony.Patch(disconnectMethod, prefix: new HarmonyMethod(typeof(MUCable_Disconnect_Patch).GetMethod(nameof(MUCable_Disconnect_Patch.Prefix))));
-                    DebugLog("[Universal Cable] Hooked MultipleUnitCable.Disconnect successfully.");
+                    harmony.Patch(updateMethod, prefix: new HarmonyMethod(typeof(MUModule_Safety).GetMethod(nameof(MUModule_Safety.Update_Prefix))));
+                }
+
+                var finalizerMethod = new HarmonyMethod(typeof(MUModule_Universal_Finalizer).GetMethod(nameof(MUModule_Universal_Finalizer.Finalizer)));
+                foreach (var method in typeof(DV.MultipleUnit.MultipleUnitModule).GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                {
+                    if (!method.IsAbstract && !method.IsGenericMethod)
+                    {
+                        try { harmony.Patch(method, finalizer: finalizerMethod); } catch { }
+                    }
                 }
             }
             catch (Exception ex)
@@ -147,10 +152,10 @@ namespace DV_UniversalRemoteMUEneabler
                     return;
                 }
 
-                bool ActivateRemoteMU = false;
+                bool activateRemoteMU = false;
                 if (__instance.carType == TrainCarType.LocoDM3 && Main.settings.DM3)
                 {
-                    ActivateRemoteMU = true;
+                    activateRemoteMU = true;
                     if (__instance.GetComponent<DM3GearboxSync>() == null)
                     {
                         __instance.gameObject.AddComponent<DM3GearboxSync>();
@@ -158,84 +163,47 @@ namespace DV_UniversalRemoteMUEneabler
                 }
                 else if ((__instance.carType == TrainCarType.LocoSteamHeavy || carTypeName.Contains("tender")) && Main.settings.S282)
                 {
-                    ActivateRemoteMU = true;
+                    activateRemoteMU = true;
                 }
                 else if (__instance.carType == TrainCarType.LocoS060 && Main.settings.S060)
                 {
-                    ActivateRemoteMU = true;
+                    activateRemoteMU = true;
                 }
                 else if (__instance.carType == TrainCarType.LocoMicroshunter && Main.settings.BE2)
                 {
-                    ActivateRemoteMU = true;
+                    activateRemoteMU = true;
                 }
                 else if (__instance.carType == TrainCarType.LocoDM1U && Main.settings.DM1U)
                 {
-                    ActivateRemoteMU = true;
+                    activateRemoteMU = true;
+                    if (__instance.GetComponent<DM3GearboxSync>() == null)
+                    {
+                        __instance.gameObject.AddComponent<DM3GearboxSync>();
+                    }
                 }
                 else if (carTypeName.Contains("caboose") && Main.settings.Caboose)
                 {
-                    ActivateRemoteMU = true;
+                    activateRemoteMU = true;
                 }
                 else if ((__instance.carType == TrainCarType.FlatbedShort || (carTypeName.Contains("flat") && carTypeName.Contains("short")) || carTypeName.Contains("utility")) && Main.settings.UtilityFlatcar)
                 {
-                    ActivateRemoteMU = true;
+                    activateRemoteMU = true;
                 }
                 else if (Main.settings.MOD_LOCO && __instance.IsLoco)
                 {
-                    ActivateRemoteMU = true;
+                    activateRemoteMU = true;
                 }
 
-                if (ActivateRemoteMU)
+                if (activateRemoteMU)
                 {
+                    if (__instance.GetComponent<DummyMUFlag>() == null)
+                    {
+                        __instance.gameObject.AddComponent<DummyMUFlag>();
+                    }
+
                     if (__instance.GetComponent<UniversalCableGenerator>() == null)
                     {
                         __instance.gameObject.AddComponent<UniversalCableGenerator>();
-                    }
-
-                    if (__instance.muModule != null) return;
-
-                    try
-                    {
-                        Main.DebugLog($"[Universal MU] Injecting core MU module into: {__instance.carType}");
-
-                        if (__instance.GetComponent<DummyMUFlag>() == null)
-                        {
-                            __instance.gameObject.AddComponent<DummyMUFlag>();
-                        }
-
-                        var frontAdapter = __instance.gameObject.AddComponent<CouplingHoseMultipleUnitAdapter>();
-                        var rearAdapter = __instance.gameObject.AddComponent<CouplingHoseMultipleUnitAdapter>();
-
-                        frontAdapter.gameObject.AddComponent<DummyMUFlag>();
-                        rearAdapter.gameObject.AddComponent<DummyMUFlag>();
-
-                        foreach (var f in typeof(CouplingHoseMultipleUnitAdapter).GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance))
-                        {
-                            if (f.FieldType.Name.Contains("Coupler"))
-                            {
-                                f.SetValue(frontAdapter, __instance.frontCoupler);
-                                f.SetValue(rearAdapter, __instance.rearCoupler);
-                            }
-                        }
-
-                        DV.MultipleUnit.MultipleUnitModule muModule = __instance.gameObject.AddComponent<DV.MultipleUnit.MultipleUnitModule>();
-                        __instance.muModule = muModule;
-
-                        foreach (var field in typeof(DV.MultipleUnit.MultipleUnitModule).GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance))
-                        {
-                            if (field.FieldType == typeof(CouplingHoseMultipleUnitAdapter))
-                            {
-                                if (field.Name.ToLower().Contains("front")) field.SetValue(muModule, frontAdapter);
-                                if (field.Name.ToLower().Contains("rear")) field.SetValue(muModule, rearAdapter);
-                            }
-                        }
-
-                        muModule.Initialize(__instance);
-                        Main.DebugLog($"[Universal MU] Successfully initialized MU module for: {__instance.carType}");
-                    }
-                    catch (System.Exception ex)
-                    {
-                        Main.Logger.Error($"[Universal MU] ERROR INSTALLING MU for {__instance.carType}: {ex.Message}\n{ex.StackTrace}");
                     }
                 }
             }
@@ -247,7 +215,21 @@ namespace DV_UniversalRemoteMUEneabler
         private static string saveFilePath;
         private static readonly HashSet<string> activeConnections = new HashSet<string>();
         private static readonly Dictionary<DV.MultipleUnit.MultipleUnitCable, (TrainCar car, string side)> cableToInfo = new Dictionary<DV.MultipleUnit.MultipleUnitCable, (TrainCar car, string side)>();
-        private static bool isQuitting = false;
+        public static bool isQuitting = false;
+
+        public static string SafeGetId(TrainCar car)
+        {
+            if (car == null) return null;
+            try
+            {
+                if (car.logicCar == null) return null;
+                return car.ID;
+            }
+            catch
+            {
+                return null;
+            }
+        }
 
         public static void Init(string modPath)
         {
@@ -271,12 +253,12 @@ namespace DV_UniversalRemoteMUEneabler
                             activeConnections.Add(trimmed);
                         }
                     }
-                    Main.Logger.Log($"[Universal Cable] Loaded {activeConnections.Count} saved cable connections from file.");
+                    Main.DebugLog($"[Universal Cable] Loaded {activeConnections.Count} saved cable connections from file.");
                 }
             }
             catch (Exception ex)
             {
-                Main.Logger.Error($"[Universal Cable] Error loading saved connections: {ex.Message}");
+                Main.DebugLog($"[Universal Cable] Error loading saved connections: {ex.Message}");
             }
         }
 
@@ -289,14 +271,18 @@ namespace DV_UniversalRemoteMUEneabler
             }
             catch (Exception ex)
             {
-                Main.Logger.Error($"[Universal Cable] Error saving connections: {ex.Message}");
+                Main.DebugLog($"[Universal Cable] Error saving connections: {ex.Message}");
             }
         }
 
         public static string GetConnectionKey(TrainCar carA, string sideA, TrainCar carB, string sideB)
         {
-            string partA = $"{carA.ID}_{sideA}";
-            string partB = $"{carB.ID}_{sideB}";
+            string idA = SafeGetId(carA);
+            string idB = SafeGetId(carB);
+            if (string.IsNullOrEmpty(idA) || string.IsNullOrEmpty(idB)) return null;
+
+            string partA = $"{idA}_{sideA}";
+            string partB = $"{idB}_{sideB}";
             return string.Compare(partA, partB, StringComparison.Ordinal) < 0
                 ? $"{partA}|{partB}"
                 : $"{partB}|{partA}";
@@ -304,6 +290,7 @@ namespace DV_UniversalRemoteMUEneabler
 
         public static bool IsConnectionSaved(string key)
         {
+            if (string.IsNullOrEmpty(key)) return false;
             return activeConnections.Contains(key);
         }
 
@@ -324,8 +311,7 @@ namespace DV_UniversalRemoteMUEneabler
             foreach (var ad in allAdapters)
             {
                 if (ad == null) continue;
-                var c = UniversalMUCableInstaller.GetCableFromAdapter(ad);
-                if (c == cable)
+                if (ad.muCable == cable)
                 {
                     var car = ad.GetComponentInParent<TrainCar>();
                     string side = UniversalMUCableInstaller.GetAdapterSide(car, ad);
@@ -344,9 +330,9 @@ namespace DV_UniversalRemoteMUEneabler
             if (infoA.car != null && infoB.car != null)
             {
                 string key = GetConnectionKey(infoA.car, infoA.side, infoB.car, infoB.side);
-                if (activeConnections.Add(key))
+                if (!string.IsNullOrEmpty(key) && activeConnections.Add(key))
                 {
-                    Main.Logger.Log($"[Universal Cable] Connection saved to disk: {key}");
+                    Main.DebugLog($"[Universal Cable] Connection saved to disk: {key}");
                     Save();
                 }
             }
@@ -367,6 +353,7 @@ namespace DV_UniversalRemoteMUEneabler
                 string tName = method.DeclaringType != null ? method.DeclaringType.Name : "";
 
                 if (mName == "OnDestroy" || mName == "OnDisable" || mName == "OnApplicationQuit" ||
+                    mName == "AboutToBeDestroyed" || mName == "OnCarInteriorAboutToBeDestroyed" ||
                     tName.Contains("SceneSwitcher") || tName.Contains("Unload") || tName.Contains("Quit"))
                 {
                     return;
@@ -374,13 +361,16 @@ namespace DV_UniversalRemoteMUEneabler
             }
 
             var (car, side) = GetCarAndSide(cable);
-            if (car != null && !string.IsNullOrEmpty(side))
+            if (car == null || car.logicCar == null) return;
+
+            string carId = SafeGetId(car);
+            if (!string.IsNullOrEmpty(carId) && !string.IsNullOrEmpty(side))
             {
-                string searchKey = $"{car.ID}_{side}";
+                string searchKey = $"{carId}_{side}";
                 int removed = activeConnections.RemoveWhere(k => k.StartsWith(searchKey + "|") || k.EndsWith("|" + searchKey));
                 if (removed > 0)
                 {
-                    Main.Logger.Log($"[Universal Cable] Connection manually removed from disk: {searchKey}");
+                    Main.DebugLog($"[Universal Cable] Connection manually removed from disk: {searchKey}");
                     Save();
                 }
             }
@@ -413,65 +403,56 @@ namespace DV_UniversalRemoteMUEneabler
         void Start()
         {
             trainCar = GetComponent<TrainCar>();
-            Main.DebugLog("[DM3 v2.0.25] Script attached to locomotive: " + (trainCar != null ? trainCar.ID : "Unknown"));
+            Main.DebugLog("[GearboxSync] Script attached to: " + (trainCar != null ? CableStateManager.SafeGetId(trainCar) : "Unknown"));
         }
 
-        private static bool CheckOneWayMUConnection(TrainCar carA, TrainCar carB)
+        private static TrainCar GetCarFromCable(DV.MultipleUnit.MultipleUnitCable cable)
         {
-            if (carA == null || carB == null) return false;
+            if (cable == null) return null;
+            if (cable.muModule != null && cable.muModule.train != null)
+                return cable.muModule.train;
 
-            var comps = carA.GetComponentsInChildren<UnityEngine.Component>(true);
-            foreach (var comp in comps)
+            var (registeredCar, _) = CableStateManager.GetCarAndSide(cable);
+            if (registeredCar != null) return registeredCar;
+
+            var adapter = cable.HoseAdapter;
+            if (adapter != null)
             {
-                if (comp == null) continue;
+                var car = adapter.GetComponentInParent<TrainCar>();
+                if (car != null) return car;
+            }
 
-                string tName = comp.GetType().Name;
-                if (!tName.Contains("Cable") && !tName.Contains("Adapter") && !tName.Contains("Hose") && !tName.Contains("MultipleUnit"))
-                    continue;
+            return null;
+        }
 
-                var type = comp.GetType();
+        private static List<TrainCar> GetMUCabledNeighbors(TrainCar car)
+        {
+            var neighbors = new List<TrainCar>();
+            if (car == null) return neighbors;
 
-                var fields = type.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                foreach (var f in fields)
+            var adapters = car.GetComponentsInChildren<CouplingHoseMultipleUnitAdapter>(true);
+            for (int i = 0; i < adapters.Length; i++)
+            {
+                var adapter = adapters[i];
+                if (adapter == null || adapter.muCable == null) continue;
+
+                var otherCable = adapter.muCable.connectedTo;
+                if (otherCable != null)
                 {
-                    object val = null;
-                    try { val = f.GetValue(comp); } catch { }
-                    if (val is UnityEngine.Component targetComp && targetComp != null)
+                    var otherCar = GetCarFromCable(otherCable);
+                    if (otherCar != null && otherCar != car && !neighbors.Contains(otherCar))
                     {
-                        var targetCar = targetComp.GetComponentInParent<TrainCar>();
-                        if (targetCar == carB) return true;
-                    }
-                }
-
-                var props = type.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                foreach (var p in props)
-                {
-                    if (!p.CanRead || p.GetIndexParameters().Length > 0) continue;
-                    object val = null;
-                    try { val = p.GetValue(comp, null); } catch { }
-                    if (val is UnityEngine.Component targetComp && targetComp != null)
-                    {
-                        var targetCar = targetComp.GetComponentInParent<TrainCar>();
-                        if (targetCar == carB) return true;
+                        neighbors.Add(otherCar);
                     }
                 }
             }
-            return false;
+
+            return neighbors;
         }
-
-        private static bool IsMUConnected(TrainCar carA, TrainCar carB)
+        private List<TrainCar> GetCabledSyncChain(TrainCar startCar)
         {
-            if (carA == null || carB == null || carA == carB) return false;
-            return CheckOneWayMUConnection(carA, carB) || CheckOneWayMUConnection(carB, carA);
-        }
-
-        private System.Collections.Generic.List<TrainCar> GetCabledDM3Chain(TrainCar startCar)
-        {
-            var result = new System.Collections.Generic.List<TrainCar>();
-            if (startCar == null || startCar.trainset == null) return result;
-
-            var visited = new System.Collections.Generic.HashSet<TrainCar>();
-            var queue = new System.Collections.Generic.Queue<TrainCar>();
+            var visited = new HashSet<TrainCar>();
+            var queue = new Queue<TrainCar>();
 
             queue.Enqueue(startCar);
             visited.Add(startCar);
@@ -479,26 +460,26 @@ namespace DV_UniversalRemoteMUEneabler
             while (queue.Count > 0)
             {
                 var current = queue.Dequeue();
-                result.Add(current);
 
-                foreach (var car in startCar.trainset.cars)
+                foreach (var neighbor in GetMUCabledNeighbors(current))
                 {
-                    if (car == null || visited.Contains(car) || !car.carType.ToString().Contains("DM3")) continue;
-
-                    if (IsMUConnected(current, car))
+                    if (neighbor != null && visited.Add(neighbor))
                     {
-                        visited.Add(car);
-                        queue.Enqueue(car);
+                        queue.Enqueue(neighbor);
                     }
                 }
             }
-            return result;
+
+            return visited
+                .Where(c => c != null && c.logicCar != null && c.GetComponent<DM3GearboxSync>() != null)
+                .OrderBy(c => CableStateManager.SafeGetId(c))
+                .ToList();
         }
 
         void Update()
         {
             if (trainCar == null) trainCar = GetComponent<TrainCar>();
-            if (trainCar == null) return;
+            if (trainCar == null || trainCar.logicCar == null) return;
 
             if (simController == null)
             {
@@ -507,7 +488,7 @@ namespace DV_UniversalRemoteMUEneabler
                     if (comp != null && comp.GetType() != typeof(DM3GearboxSync) && comp.GetType().Name.Contains("SimController"))
                     {
                         simController = comp;
-                        Main.DebugLog("[DM3 v2.0.25] SimController linked for " + trainCar.ID);
+                        Main.DebugLog("[GearboxSync] SimController linked for " + CableStateManager.SafeGetId(trainCar));
                         break;
                     }
                 }
@@ -515,8 +496,16 @@ namespace DV_UniversalRemoteMUEneabler
 
             if (simController == null) return;
 
-            var trainset = trainCar.trainset;
-            if (trainset == null || trainset.cars == null || trainset.cars.Count <= 1) return;
+            var chain = GetCabledSyncChain(trainCar);
+            if (chain.Count <= 1)
+            {
+                if (cachedMUConnections != 0)
+                {
+                    fastPairs.Clear();
+                    cachedMUConnections = 0;
+                }
+                return;
+            }
 
             TrainCar currentPlayerCar = null;
             if (cachedPlayerManagerType == null)
@@ -552,18 +541,6 @@ namespace DV_UniversalRemoteMUEneabler
                 cachedMUConnections = -1;
             }
 
-            var chain = GetCabledDM3Chain(trainCar);
-            if (chain.Count <= 1)
-            {
-                if (cachedMUConnections != 0)
-                {
-                    fastPairs.Clear();
-                    cachedMUConnections = 0;
-                }
-                return;
-            }
-
-            chain = chain.OrderBy(c => c.ID).ToList();
             TrainCar masterCar = (currentPlayerCar != null && chain.Contains(currentPlayerCar)) ? currentPlayerCar : chain[0];
 
             if (masterCar == null) return;
@@ -581,7 +558,7 @@ namespace DV_UniversalRemoteMUEneabler
                 for (int i = 0; i < chain.Count; i++)
                 {
                     var slaveCar = chain[i];
-                    if (slaveCar == masterCar || slaveCar == null) continue;
+                    if (slaveCar == masterCar || slaveCar == null || slaveCar.logicCar == null) continue;
 
                     var slaveSync = slaveCar.GetComponent<DM3GearboxSync>();
                     if (slaveSync == null || slaveSync.simController == null) continue;
@@ -589,7 +566,7 @@ namespace DV_UniversalRemoteMUEneabler
                     BuildFastCache(simController, slaveSync.simController, 0);
                 }
 
-                Main.DebugLog($"[DM3 v2.0.25] Sync cache rebuilt for {masterCar.ID}. Synchronizing {currentMUConnections} cabled DM3(s). Cached {fastPairs.Count} fields.");
+                Main.DebugLog($"[GearboxSync] Sync cache rebuilt for {CableStateManager.SafeGetId(masterCar)}. Synchronizing {currentMUConnections} unit(s). Cached {fastPairs.Count} fields.");
             }
 
             for (int i = 0; i < fastPairs.Count; i++)
@@ -699,40 +676,186 @@ namespace DV_UniversalRemoteMUEneabler
     [HarmonyPatch(typeof(DV.MultipleUnit.MultipleUnitCable), "Connect", new System.Type[] { typeof(DV.MultipleUnit.MultipleUnitCable), typeof(bool) })]
     public class MUCable_Connect_Patch
     {
-        public static void Postfix(DV.MultipleUnit.MultipleUnitCable __instance, DV.MultipleUnit.MultipleUnitCable other)
+        public static bool Prefix(DV.MultipleUnit.MultipleUnitCable __instance, DV.MultipleUnit.MultipleUnitCable other, bool playAudio)
         {
+            if (__instance == null || other == null || other == __instance) return false;
+
+            if (__instance.connectedTo == other && other.connectedTo == __instance) return false;
+
+            if (__instance.connectedTo != null && __instance.connectedTo != other)
+            {
+                __instance.connectedTo = null;
+            }
+            if (other.connectedTo != null && other.connectedTo != __instance)
+            {
+                other.connectedTo = null;
+            }
+
+            __instance.connectedTo = other;
+            other.connectedTo = __instance;
+
+            BaseControlsOverrider overrider1 = __instance.muModule != null ? __instance.muModule.controlsOverrider : null;
+            BaseControlsOverrider overrider2 = other.muModule != null ? other.muModule.controlsOverrider : null;
+
+            if (overrider1 != null)
+            {
+                try
+                {
+                    if (overrider1.Throttle != null) overrider1.Throttle.Set(0f);
+                    if (overrider1.DynamicBrake != null) overrider1.DynamicBrake.Set(0f);
+                    if (overrider1.Reverser != null) overrider1.Reverser.Set(0.5f);
+                    if (overrider1.Sander != null) overrider1.Sander.Set(0f);
+                    if (overrider1.HeadlightsFront != null) overrider1.HeadlightsFront.Set(0.4f);
+                    if (overrider1.HeadlightsRear != null) overrider1.HeadlightsRear.Set(0.4f);
+                }
+                catch { }
+            }
+
+            if (overrider2 != null)
+            {
+                try
+                {
+                    if (overrider2.Throttle != null) overrider2.Throttle.Set(0f);
+                    if (overrider2.DynamicBrake != null) overrider2.DynamicBrake.Set(0f);
+                    if (overrider2.Reverser != null) overrider2.Reverser.Set(0.5f);
+                    if (overrider2.Sander != null) overrider2.Sander.Set(0f);
+                    if (overrider2.HeadlightsFront != null) overrider2.HeadlightsFront.Set(0.4f);
+                    if (overrider2.HeadlightsRear != null) overrider2.HeadlightsRear.Set(0.4f);
+                }
+                catch { }
+            }
+
+            if (overrider1 != null && overrider2 != null)
+            {
+                try
+                {
+                    float b1 = overrider1.Brake != null ? overrider1.Brake.Value : 0f;
+                    float b2 = overrider2.Brake != null ? overrider2.Brake.Value : 0f;
+                    if (b2 > b1) overrider1.Brake?.Set(b2);
+                    else overrider2.Brake?.Set(b1);
+
+                    float ind1 = overrider1.IndependentBrake != null ? overrider1.IndependentBrake.Value : 0f;
+                    float ind2 = overrider2.IndependentBrake != null ? overrider2.IndependentBrake.Value : 0f;
+                    if (ind2 > ind1) overrider1.IndependentBrake?.Set(ind2);
+                    else overrider2.IndependentBrake?.Set(ind1);
+                }
+                catch { }
+            }
+
+            try
+            {
+                var anyField = typeof(DV.MultipleUnit.MultipleUnitCable).GetField("AnyConnectionChanged", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                var anyDel = anyField?.GetValue(null) as MulticastDelegate;
+                if (anyDel != null)
+                {
+                    anyDel.DynamicInvoke(true, __instance, other);
+                }
+            }
+            catch { }
+
+            InvokeCableConnectionChanged(__instance, true, playAudio);
+            InvokeCableConnectionChanged(other, true, playAudio);
+
             try
             {
                 CableStateManager.OnCableConnected(__instance, other);
             }
-            catch (Exception ex)
-            {
-                Main.DebugLog($"[Universal Cable] Error in Connect postfix: {ex.Message}");
-            }
+            catch { }
+
+            return false;
         }
 
-        public static Exception Finalizer(Exception __exception)
+        private static void InvokeCableConnectionChanged(DV.MultipleUnit.MultipleUnitCable cable, bool connected, bool playAudio)
         {
-            if (__exception != null)
+            if (cable == null) return;
+            try
             {
-                Main.DebugLog($"[Universal Cable] Ignored native MU connect crash: {__exception.Message}");
+                var field = typeof(DV.MultipleUnit.MultipleUnitCable).GetField("ConnectionChanged", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                var action = field?.GetValue(cable) as Action<bool, bool>;
+                action?.Invoke(connected, playAudio);
             }
-            return null;
+            catch (Exception ex)
+            {
+                Main.DebugLog($"[Universal Cable] ConnectionChanged invoke note: {ex.Message}");
+            }
         }
     }
 
-    public static class MUCable_Disconnect_Patch
+    [HarmonyPatch(typeof(DV.MultipleUnit.MultipleUnitCable), "Disconnect", new System.Type[] { typeof(bool) })]
+    public class MUCable_Disconnect_Patch
     {
-        public static void Prefix(DV.MultipleUnit.MultipleUnitCable __instance)
+        public static bool Prefix(DV.MultipleUnit.MultipleUnitCable __instance, bool playAudio)
         {
+            if (__instance == null || __instance.connectedTo == null)
+            {
+                return false;
+            }
+
+            var other = __instance.connectedTo;
+
+            __instance.connectedTo = null;
+            other.connectedTo = null;
+
+            try
+            {
+                var anyField = typeof(DV.MultipleUnit.MultipleUnitCable).GetField("AnyConnectionChanged", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                var anyDel = anyField?.GetValue(null) as MulticastDelegate;
+                if (anyDel != null)
+                {
+                    anyDel.DynamicInvoke(false, __instance, other);
+                }
+            }
+            catch { }
+
+            InvokeCableConnectionChanged(__instance, false, playAudio);
+            InvokeCableConnectionChanged(other, false, playAudio);
+
             try
             {
                 CableStateManager.OnCableDisconnected(__instance);
             }
-            catch (Exception ex)
+            catch { }
+
+            return false;
+        }
+
+        private static void InvokeCableConnectionChanged(DV.MultipleUnit.MultipleUnitCable cable, bool connected, bool playAudio)
+        {
+            if (cable == null) return;
+            try
             {
-                Main.DebugLog($"[Universal Cable] Error in Disconnect prefix: {ex.Message}");
+                var field = typeof(DV.MultipleUnit.MultipleUnitCable).GetField("ConnectionChanged", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                var action = field?.GetValue(cable) as Action<bool, bool>;
+                action?.Invoke(connected, playAudio);
             }
+            catch { }
+        }
+
+        public static Exception Finalizer(Exception __exception)
+        {
+            return null;
+        }
+    }
+
+    public static class MUModule_Safety
+    {
+        public static bool Update_Prefix(DV.MultipleUnit.MultipleUnitModule __instance)
+        {
+            if (__instance == null) return false;
+            var car = __instance.train ?? __instance.GetComponent<TrainCar>() ?? __instance.GetComponentInParent<TrainCar>();
+            if (car != null && !car.IsLoco && car.GetComponent<DummyMUFlag>() != null)
+            {
+                return false;
+            }
+            return true;
+        }
+    }
+
+    public static class MUModule_Universal_Finalizer
+    {
+        public static Exception Finalizer(Exception __exception)
+        {
+            return null;
         }
     }
 
@@ -807,12 +930,22 @@ namespace DV_UniversalRemoteMUEneabler
                 var allAdapters = UnityEngine.Resources.FindObjectsOfTypeAll<CouplingHoseMultipleUnitAdapter>();
                 foreach (var adapter in allAdapters)
                 {
-                    if (adapter != null && adapter.GetComponent<DummyMUFlag>() == null)
-                    {
-                        var parentCar = adapter.GetComponentInParent<TrainCar>();
-                        if (parentCar != null && parentCar.GetComponent<DummyMUFlag>() != null) continue;
+                    if (adapter == null) continue;
+                    if (adapter.GetComponent<DummyMUFlag>() != null) continue;
 
-                        muCablePrefab = adapter.gameObject;
+                    var parentCar = adapter.GetComponentInParent<TrainCar>();
+                    if (parentCar != null && parentCar.GetComponent<DummyMUFlag>() != null) continue;
+
+                    if (adapter.gameObject != null && adapter.GetComponentInChildren<Renderer>(true) != null && !adapter.IsConnected)
+                    {
+                        muCablePrefab = UnityEngine.Object.Instantiate(adapter.gameObject);
+                        muCablePrefab.name = "UniversalMUCable_Prefab";
+                        muCablePrefab.SetActive(false);
+                        UnityEngine.Object.DontDestroyOnLoad(muCablePrefab);
+
+                        var ad = muCablePrefab.GetComponent<CouplingHoseMultipleUnitAdapter>();
+                        if (ad != null) ad.muCable = null;
+
                         Main.DebugLog("[Universal Cable] SUCCESS: Cached native MU cable prefab!");
                         return;
                     }
@@ -820,8 +953,21 @@ namespace DV_UniversalRemoteMUEneabler
             }
             catch (System.Exception ex)
             {
-                Main.Logger.Error($"[Universal Cable] Error caching prefab: {ex.Message}");
+                Main.DebugLog($"[Universal Cable] Error caching prefab: {ex.Message}");
             }
+        }
+
+        private static void SetModuleMember(DV.MultipleUnit.MultipleUnitModule module, string name, object value)
+        {
+            if (module == null) return;
+            try
+            {
+                var f = typeof(DV.MultipleUnit.MultipleUnitModule).GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (f != null) { f.SetValue(module, value); return; }
+                var p = typeof(DV.MultipleUnit.MultipleUnitModule).GetProperty(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (p != null && p.CanWrite) { p.SetValue(module, value, null); }
+            }
+            catch { }
         }
 
         private static void AttachCablesAndInitializeMU(TrainCar car)
@@ -863,43 +1009,17 @@ namespace DV_UniversalRemoteMUEneabler
                         frontOffset = new Vector3(0.5f, 0.15f, -0.05f);
                         rearOffset = new Vector3(0.3f, 0.05f, -0.45f);
                     }
-                    else if (typeName.Contains("flat") || typeName.Contains("caboose") || typeName.Contains("utility"))
+                    else if (typeName.Contains("caboose"))
+                    {
+                        frontOffset = new Vector3(0.4f, 0.05f, -0.45f);
+                        rearOffset = new Vector3(0.4f, 0.05f, -0.45f);
+                    }
+                    else if (typeName.Contains("flat") || typeName.Contains("utility"))
                     {
                         frontOffset = new Vector3(0.4f, 0.05f, -0.45f);
                         rearOffset = new Vector3(0.4f, 0.05f, -0.45f);
                     }
                     break;
-            }
-
-            CouplingHoseMultipleUnitAdapter frontAdapter = null;
-            CouplingHoseMultipleUnitAdapter rearAdapter = null;
-
-            if (car.frontCoupler != null)
-            {
-                Transform existing = car.frontCoupler.transform.Find("MUCable_Front");
-                GameObject frontObj = existing != null ? existing.gameObject : UnityEngine.Object.Instantiate(muCablePrefab, car.frontCoupler.transform);
-                frontObj.name = "MUCable_Front";
-                frontObj.transform.localPosition = frontOffset;
-                frontObj.transform.localRotation = Quaternion.Euler(frontRotation);
-                frontObj.SetActive(true);
-
-                frontAdapter = frontObj.GetComponent<CouplingHoseMultipleUnitAdapter>();
-                FixChildReferences(frontObj, car, car.frontCoupler, frontAdapter);
-                CableStateManager.RegisterCable(GetCableFromAdapter(frontAdapter), car, "front");
-            }
-
-            if (car.rearCoupler != null)
-            {
-                Transform existing = car.rearCoupler.transform.Find("MUCable_Rear");
-                GameObject rearObj = existing != null ? existing.gameObject : UnityEngine.Object.Instantiate(muCablePrefab, car.rearCoupler.transform);
-                rearObj.name = "MUCable_Rear";
-                rearObj.transform.localPosition = rearOffset;
-                rearObj.transform.localRotation = Quaternion.Euler(rearRotation);
-                rearObj.SetActive(true);
-
-                rearAdapter = rearObj.GetComponent<CouplingHoseMultipleUnitAdapter>();
-                FixChildReferences(rearObj, car, car.rearCoupler, rearAdapter);
-                CableStateManager.RegisterCable(GetCableFromAdapter(rearAdapter), car, "rear");
             }
 
             DV.MultipleUnit.MultipleUnitModule muModule = car.GetComponent<DV.MultipleUnit.MultipleUnitModule>();
@@ -909,25 +1029,68 @@ namespace DV_UniversalRemoteMUEneabler
             }
             car.muModule = muModule;
 
-            var moduleFields = typeof(DV.MultipleUnit.MultipleUnitModule).GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            foreach (var f in moduleFields)
+            SetModuleMember(muModule, "train", car);
+
+            var frontCable = new DV.MultipleUnit.MultipleUnitCable(muModule, true);
+            var rearCable = new DV.MultipleUnit.MultipleUnitCable(muModule, false);
+
+            CouplingHoseMultipleUnitAdapter frontAdapter = null;
+            CouplingHoseMultipleUnitAdapter rearAdapter = null;
+
+            GameObject frontObj = null;
+            GameObject rearObj = null;
+
+            if (car.frontCoupler != null)
             {
-                if (f.FieldType == typeof(CouplingHoseMultipleUnitAdapter))
+                Transform existing = car.frontCoupler.transform.Find("MUCable_Front");
+                frontObj = existing != null ? existing.gameObject : UnityEngine.Object.Instantiate(muCablePrefab, car.frontCoupler.transform);
+                frontObj.name = "MUCable_Front";
+                frontObj.transform.localPosition = frontOffset;
+                frontObj.transform.localRotation = Quaternion.Euler(frontRotation);
+
+                frontAdapter = frontObj.GetComponent<CouplingHoseMultipleUnitAdapter>();
+                if (frontAdapter != null)
                 {
-                    string nameLower = f.Name.ToLower();
-                    if (nameLower.Contains("front") && frontAdapter != null) f.SetValue(muModule, frontAdapter);
-                    if (nameLower.Contains("rear") && rearAdapter != null) f.SetValue(muModule, rearAdapter);
+                    frontAdapter.muCable = frontCable;
                 }
+                CableStateManager.RegisterCable(frontCable, car, "front");
             }
 
-            try
+            if (car.rearCoupler != null)
             {
-                muModule.Initialize(car);
-                Main.DebugLog($"[Universal Cable] SUCCESS: MU Module and Cables successfully initialized on {car.ID}");
+                Transform existing = car.rearCoupler.transform.Find("MUCable_Rear");
+                rearObj = existing != null ? existing.gameObject : UnityEngine.Object.Instantiate(muCablePrefab, car.rearCoupler.transform);
+                rearObj.name = "MUCable_Rear";
+                rearObj.transform.localPosition = rearOffset;
+                rearObj.transform.localRotation = Quaternion.Euler(rearRotation);
+
+                rearAdapter = rearObj.GetComponent<CouplingHoseMultipleUnitAdapter>();
+                if (rearAdapter != null)
+                {
+                    rearAdapter.muCable = rearCable;
+                }
+                CableStateManager.RegisterCable(rearCable, car, "rear");
             }
-            catch (System.Exception ex)
+
+            SetModuleMember(muModule, "frontCableAdapter", frontAdapter);
+            SetModuleMember(muModule, "rearCableAdapter", rearAdapter);
+            SetModuleMember(muModule, "frontCable", frontCable);
+            SetModuleMember(muModule, "rearCable", rearCable);
+
+            if (frontObj != null) frontObj.SetActive(true);
+            if (rearObj != null) rearObj.SetActive(true);
+
+            if (car.IsLoco)
             {
-                Main.DebugLog($"[Universal Cable] MU Module init note: {ex.Message}");
+                try
+                {
+                    muModule.Initialize(car);
+                    Main.DebugLog($"[Universal Cable] SUCCESS: MU Module initialized on {CableStateManager.SafeGetId(car)}");
+                }
+                catch (System.Exception ex)
+                {
+                    Main.DebugLog($"[Universal Cable] MU Module init note: {ex.Message}");
+                }
             }
 
             car.StartCoroutine(AutoReconnectAfterLoad(car));
@@ -935,7 +1098,8 @@ namespace DV_UniversalRemoteMUEneabler
 
         private static System.Collections.IEnumerator AutoReconnectAfterLoad(TrainCar car)
         {
-            Main.Logger.Log($"[Universal Cable] [{car.ID}] Starting AutoReconnect coroutine...");
+            string carId = CableStateManager.SafeGetId(car);
+            Main.DebugLog($"[Universal Cable] [{carId ?? "Unknown"}] Starting AutoReconnect coroutine...");
             yield return new UnityEngine.WaitForSeconds(2.0f);
 
             int attempts = 0;
@@ -944,7 +1108,7 @@ namespace DV_UniversalRemoteMUEneabler
             bool frontResolved = false;
             bool rearResolved = false;
 
-            while (car != null && attempts < maxAttempts)
+            while (car != null && car.logicCar != null && attempts < maxAttempts)
             {
                 attempts++;
 
@@ -960,32 +1124,32 @@ namespace DV_UniversalRemoteMUEneabler
 
                 if (frontResolved && rearResolved)
                 {
-                    Main.Logger.Log($"[Universal Cable] [{car.ID}] All coupled cables resolved.");
+                    Main.DebugLog($"[Universal Cable] [{CableStateManager.SafeGetId(car)}] All coupled cables resolved.");
                     yield break;
                 }
 
                 yield return new UnityEngine.WaitForSeconds(1.5f);
             }
 
-            Main.Logger.Log($"[Universal Cable] [{car.ID}] AutoReconnect loop finished.");
+            Main.DebugLog($"[Universal Cable] [{CableStateManager.SafeGetId(car) ?? "Unknown"}] AutoReconnect loop finished.");
         }
 
         public static System.Collections.IEnumerator MonitorS282TenderConnectionCoroutine(TrainCar s282Car)
         {
             yield return new UnityEngine.WaitForSeconds(5.0f);
 
-            while (s282Car != null)
+            while (s282Car != null && s282Car.logicCar != null)
             {
                 yield return new UnityEngine.WaitForSeconds(3.0f);
 
-                if (s282Car == null || !s282Car.gameObject.activeInHierarchy) continue;
+                if (s282Car == null || s282Car.logicCar == null || !s282Car.gameObject.activeInHierarchy) continue;
 
                 Coupler rearCoupler = s282Car.rearCoupler;
                 if (rearCoupler == null || rearCoupler.coupledTo == null) continue;
 
                 Coupler otherCoupler = rearCoupler.coupledTo;
                 TrainCar tenderCar = otherCoupler.GetComponentInParent<TrainCar>();
-                if (tenderCar == null) continue;
+                if (tenderCar == null || tenderCar.logicCar == null) continue;
 
                 string otherTypeName = tenderCar.carType.ToString().ToLower();
                 string otherSide = GetCouplerSide(tenderCar, otherCoupler);
@@ -996,18 +1160,18 @@ namespace DV_UniversalRemoteMUEneabler
                     var tenderAdapter = FindAdapterNearCoupler(tenderCar, otherCoupler);
                     if (myAdapter == null || tenderAdapter == null) continue;
 
-                    var myCable = GetCableFromAdapter(myAdapter);
-                    var tenderCable = GetCableFromAdapter(tenderAdapter);
+                    var myCable = myAdapter.muCable;
+                    var tenderCable = tenderAdapter.muCable;
                     if (myCable == null || tenderCable == null) continue;
 
-                    if (!AreCablesConnectedTogether(myCable, tenderCable))
+                    if (myCable.connectedTo != tenderCable)
                     {
                         try
                         {
                             Main.DebugLog($"[Universal Cable] Auto-linking S282 and Tender gangway MU cables...");
                             isAutoReconnecting = true;
                             myCable.Connect(tenderCable, false);
-                            Main.Logger.Log($"[Universal Cable] Automatically connected S282 gangway to Tender ({tenderCar.ID}).");
+                            Main.DebugLog($"[Universal Cable] Automatically connected S282 gangway to Tender ({CableStateManager.SafeGetId(tenderCar)}).");
                         }
                         catch (System.Exception ex)
                         {
@@ -1033,7 +1197,7 @@ namespace DV_UniversalRemoteMUEneabler
             }
 
             TrainCar otherCar = otherCoupler.GetComponentInParent<TrainCar>();
-            if (otherCar == null) return false;
+            if (otherCar == null || otherCar.logicCar == null) return false;
 
             string otherSide = GetCouplerSide(otherCar, otherCoupler);
             string connectionKey = CableStateManager.GetConnectionKey(car, side, otherCar, otherSide);
@@ -1047,7 +1211,7 @@ namespace DV_UniversalRemoteMUEneabler
             {
                 if (attempt >= 2)
                 {
-                    Main.Logger.Log($"[Universal Cable] Connection {connectionKey} NOT saved on disk. Skipping auto-reconnect.");
+                    Main.DebugLog($"[Universal Cable] Connection {connectionKey} NOT saved on disk. Skipping auto-reconnect.");
                     return true;
                 }
                 return false;
@@ -1058,39 +1222,39 @@ namespace DV_UniversalRemoteMUEneabler
 
             if (myAdapter == null || otherAdapter == null)
             {
-                Main.DebugLog($"[Universal Cable] [{car.ID}] Waiting for adapter: myAdapter={myAdapter != null}, otherAdapter={otherAdapter != null} ({side})");
+                Main.DebugLog($"[Universal Cable] [{CableStateManager.SafeGetId(car)}] Waiting for adapter: myAdapter={myAdapter != null}, otherAdapter={otherAdapter != null} ({side})");
                 return false;
             }
 
-            var myCable = GetCableFromAdapter(myAdapter);
-            var otherCable = GetCableFromAdapter(otherAdapter);
+            var myCable = myAdapter.muCable;
+            var otherCable = otherAdapter.muCable;
 
             if (myCable == null || otherCable == null)
             {
-                Main.DebugLog($"[Universal Cable] [{car.ID}] Waiting for cable object: myCable={myCable != null}, otherCable={otherCable != null} ({side})");
+                Main.DebugLog($"[Universal Cable] [{CableStateManager.SafeGetId(car)}] Waiting for cable object: myCable={myCable != null}, otherCable={otherCable != null} ({side})");
                 return false;
             }
 
             CableStateManager.RegisterCable(myCable, car, side);
             CableStateManager.RegisterCable(otherCable, otherCar, otherSide);
 
-            if (AreCablesConnectedTogether(myCable, otherCable))
+            if (myCable.connectedTo == otherCable && otherCable.connectedTo == myCable)
             {
-                Main.Logger.Log($"[Universal Cable] [{car.ID}] Cables on {side} are already connected to {otherCar.ID}.");
+                Main.DebugLog($"[Universal Cable] [{CableStateManager.SafeGetId(car)}] Cables on {side} are already connected to {CableStateManager.SafeGetId(otherCar)}.");
                 return true;
             }
 
             try
             {
                 isAutoReconnecting = true;
-                Main.Logger.Log($"[Universal Cable] [{car.ID}] Restoring connection {side} -> {otherCar.ID}...");
+                Main.DebugLog($"[Universal Cable] [{CableStateManager.SafeGetId(car)}] Restoring connection {side} -> {CableStateManager.SafeGetId(otherCar)}...");
                 myCable.Connect(otherCable, false);
-                Main.Logger.Log($"[Universal Cable] [{car.ID}] SUCCESS: Cables connected to {otherCar.ID}!");
+                Main.DebugLog($"[Universal Cable] [{CableStateManager.SafeGetId(car)}] SUCCESS: Cables connected to {CableStateManager.SafeGetId(otherCar)}!");
                 return true;
             }
             catch (System.Exception ex)
             {
-                Main.Logger.Log($"[Universal Cable] [{car.ID}] Connect() threw: {ex.Message}");
+                Main.DebugLog($"[Universal Cable] [{CableStateManager.SafeGetId(car)}] Connect() threw: {ex.Message}");
                 return false;
             }
             finally
@@ -1143,109 +1307,6 @@ namespace DV_UniversalRemoteMUEneabler
             }
 
             return closest;
-        }
-
-        public static DV.MultipleUnit.MultipleUnitCable GetCableFromAdapter(CouplingHoseMultipleUnitAdapter adapter)
-        {
-            if (adapter == null) return null;
-
-            foreach (var field in adapter.GetType().GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
-            {
-                try
-                {
-                    var val = field.GetValue(adapter);
-                    if (val is DV.MultipleUnit.MultipleUnitCable cable) return cable;
-                }
-                catch { }
-            }
-
-            foreach (var prop in adapter.GetType().GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
-            {
-                try
-                {
-                    var val = prop.GetValue(adapter, null);
-                    if (val is DV.MultipleUnit.MultipleUnitCable cable) return cable;
-                }
-                catch { }
-            }
-
-            foreach (var comp in adapter.GetComponentsInChildren<Component>(true))
-            {
-                if (comp == null || comp == adapter) continue;
-                foreach (var field in comp.GetType().GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
-                {
-                    try
-                    {
-                        var val = field.GetValue(comp);
-                        if (val is DV.MultipleUnit.MultipleUnitCable cable) return cable;
-                    }
-                    catch { }
-                }
-            }
-
-            return null;
-        }
-
-        private static bool AreCablesConnectedTogether(DV.MultipleUnit.MultipleUnitCable a, DV.MultipleUnit.MultipleUnitCable b)
-        {
-            if (a == null || b == null) return false;
-
-            System.Type type = a.GetType();
-            while (type != null && type != typeof(object))
-            {
-                var fields = type.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                foreach (var f in fields)
-                {
-                    if (typeof(DV.MultipleUnit.MultipleUnitCable).IsAssignableFrom(f.FieldType))
-                    {
-                        var valA = f.GetValue(a);
-                        if (valA == (object)b) return true;
-                        var valB = f.GetValue(b);
-                        if (valB == (object)a) return true;
-                    }
-                }
-                type = type.BaseType;
-            }
-            return false;
-        }
-
-        private static void FixChildReferences(GameObject cableObj, TrainCar car, Coupler coupler, CouplingHoseMultipleUnitAdapter adapter)
-        {
-            if (cableObj == null) return;
-
-            if (adapter != null)
-            {
-                var adapterFields = adapter.GetType().GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                foreach (var f in adapterFields)
-                {
-                    if (f.FieldType.Name.Contains("Coupler"))
-                    {
-                        f.SetValue(adapter, coupler);
-                    }
-                }
-            }
-
-            foreach (var comp in cableObj.GetComponentsInChildren<UnityEngine.Component>(true))
-            {
-                if (comp == null) continue;
-
-                var fields = comp.GetType().GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                foreach (var f in fields)
-                {
-                    if (f.FieldType == typeof(TrainCar))
-                    {
-                        f.SetValue(comp, car);
-                    }
-                    else if (f.FieldType.Name.Contains("Coupler"))
-                    {
-                        f.SetValue(comp, coupler);
-                    }
-                    else if (f.FieldType == typeof(CouplingHoseMultipleUnitAdapter))
-                    {
-                        if (adapter != null) f.SetValue(comp, adapter);
-                    }
-                }
-            }
         }
     }
 }
