@@ -209,7 +209,141 @@ namespace DV_UniversalRemoteMUEneabler
             }
         }
     }
+    [HarmonyPatch(typeof(MultipleUnitStateObserver), "UpdateFront")]
+    public static class MultipleUnitStateObserver_UpdateFront_Patch
+    {
+        private static readonly FieldInfo muModuleField = AccessTools.Field(typeof(MultipleUnitStateObserver), "multipleUnitModule");
+        private static readonly PropertyInfo tempProp = AccessTools.Property(typeof(MultipleUnitStateObserver), nameof(MultipleUnitStateObserver.MUChainTemperatureState));
+        private static readonly PropertyInfo wheelProp = AccessTools.Property(typeof(MultipleUnitStateObserver), nameof(MultipleUnitStateObserver.AnyInChainWheelslipping));
 
+        public static bool Prefix(MultipleUnitStateObserver __instance)
+        {
+            if (__instance == null) return false;
+
+            var myModule = muModuleField?.GetValue(__instance) as MultipleUnitModule;
+            if (myModule == null || myModule.FrontCable == null || !myModule.FrontCable.IsConnected || myModule.FrontCable.connectedTo == null)
+            {
+                return false;
+            }
+
+            MultipleUnitModule y = myModule;
+            MultipleUnitModule current = myModule.FrontCable.connectedTo.muModule;
+            bool slipFlag = false;
+            var tempState = __instance.MUChainTemperatureState;
+
+            int safety = 0;
+            while (current != null && safety++ < 100)
+            {
+                MultipleUnitModule nextFront = (current.FrontCable != null && current.FrontCable.IsConnected && current.FrontCable.connectedTo != null)
+                    ? current.FrontCable.connectedTo.muModule : null;
+                MultipleUnitModule nextRear = (current.RearCable != null && current.RearCable.IsConnected && current.RearCable.connectedTo != null)
+                    ? current.RearCable.connectedTo.muModule : null;
+
+                bool cameFromFront = nextFront != null && nextFront == y;
+
+                var observer = current.GetComponent<MultipleUnitStateObserver>();
+                if (observer != null)
+                {
+                    if (observer.IsWheelslipping) slipFlag = true;
+                    tempState |= observer.CarTemperatureState;
+                }
+
+                y = current;
+                current = cameFromFront ? nextRear : nextFront;
+                if (current == myModule) break;
+            }
+
+            tempProp?.SetValue(__instance, tempState, null);
+            if (slipFlag)
+            {
+                wheelProp?.SetValue(__instance, true, null);
+            }
+
+            return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(MultipleUnitStateObserver), "UpdateRear")]
+    public static class MultipleUnitStateObserver_UpdateRear_Patch
+    {
+        private static readonly FieldInfo muModuleField = AccessTools.Field(typeof(MultipleUnitStateObserver), "multipleUnitModule");
+        private static readonly PropertyInfo tempProp = AccessTools.Property(typeof(MultipleUnitStateObserver), nameof(MultipleUnitStateObserver.MUChainTemperatureState));
+        private static readonly PropertyInfo wheelProp = AccessTools.Property(typeof(MultipleUnitStateObserver), nameof(MultipleUnitStateObserver.AnyInChainWheelslipping));
+
+        public static bool Prefix(MultipleUnitStateObserver __instance)
+        {
+            if (__instance == null) return false;
+
+            var myModule = muModuleField?.GetValue(__instance) as MultipleUnitModule;
+            if (myModule == null || myModule.RearCable == null || !myModule.RearCable.IsConnected || myModule.RearCable.connectedTo == null)
+            {
+                return false;
+            }
+
+            MultipleUnitModule y = myModule;
+            MultipleUnitModule current = myModule.RearCable.connectedTo.muModule;
+            bool slipFlag = false;
+            var tempState = __instance.MUChainTemperatureState;
+
+            int safety = 0;
+            while (current != null && safety++ < 100)
+            {
+                MultipleUnitModule nextFront = (current.FrontCable != null && current.FrontCable.IsConnected && current.FrontCable.connectedTo != null)
+                    ? current.FrontCable.connectedTo.muModule : null;
+                MultipleUnitModule nextRear = (current.RearCable != null && current.RearCable.IsConnected && current.RearCable.connectedTo != null)
+                    ? current.RearCable.connectedTo.muModule : null;
+
+                bool cameFromRear = nextRear != null && nextRear == y;
+
+                var observer = current.GetComponent<MultipleUnitStateObserver>();
+                if (observer != null)
+                {
+                    if (observer.IsWheelslipping) slipFlag = true;
+                    tempState |= observer.CarTemperatureState;
+                }
+
+                y = current;
+                current = cameFromRear ? nextFront : nextRear;
+                if (current == myModule) break;
+            }
+
+            tempProp?.SetValue(__instance, tempState, null);
+            if (slipFlag)
+            {
+                wheelProp?.SetValue(__instance, true, null);
+            }
+
+            return false;
+        }
+    }
+    [HarmonyPatch(typeof(DV.MultipleUnit.MUControlBlockPropagator), "RecalculateControlBlockFlags")]
+    public static class MUControlBlockPropagator_Recalculate_Patch
+    {
+        public static bool Prefix(BaseControlsOverrider co)
+        {
+            return co != null;
+        }
+    }
+
+    [HarmonyPatch(typeof(DV.MultipleUnit.MUControlBlockPropagator), "UpdateMuPropagatedBlockFlags")]
+    public static class MUControlBlockPropagator_UpdateFlags_Patch
+    {
+        public static bool Prefix(BaseControlsOverrider co)
+        {
+            return co != null;
+        }
+    }
+    [HarmonyPatch(typeof(TrainCar), "IsMultipleUnit", MethodType.Getter)]
+    public static class TrainCar_IsMultipleUnit_Patch
+    {
+        public static void Postfix(TrainCar __instance, ref bool __result)
+        {
+            if (!__result && __instance != null && (__instance.muModule != null || __instance.GetComponent<DummyMUFlag>() != null))
+            {
+                __result = true;
+            }
+        }
+    }
     public static class CableStateManager
     {
         private static string saveFilePath;
@@ -305,7 +439,19 @@ namespace DV_UniversalRemoteMUEneabler
         public static (TrainCar car, string side) GetCarAndSide(DV.MultipleUnit.MultipleUnitCable cable)
         {
             if (cable == null) return (null, null);
-            if (cableToInfo.TryGetValue(cable, out var info)) return info;
+            if (cableToInfo.TryGetValue(cable, out var info) && info.car != null) return info;
+
+            // Rychlé a spolehlivé zjištění pro všechny vozy a lokomotivy
+            if (cable.muModule != null)
+            {
+                var car = cable.muModule.train ?? cable.muModule.GetComponent<TrainCar>() ?? cable.muModule.GetComponentInParent<TrainCar>();
+                if (car != null)
+                {
+                    string side = (cable == cable.muModule.FrontCable) ? "front" : "rear";
+                    cableToInfo[cable] = (car, side);
+                    return (car, side);
+                }
+            }
 
             var allAdapters = UnityEngine.Object.FindObjectsOfType<CouplingHoseMultipleUnitAdapter>();
             foreach (var ad in allAdapters)
@@ -885,7 +1031,7 @@ namespace DV_UniversalRemoteMUEneabler
         {
             if (car == null) yield break;
 
-            yield return new UnityEngine.WaitForSeconds(1.0f);
+            yield return new UnityEngine.WaitForSeconds(0.1f);
 
             var existingAdapters = car.GetComponentsInChildren<CouplingHoseMultipleUnitAdapter>(true);
             if (existingAdapters.Any(a => a.GetComponent<DummyMUFlag>() == null))
