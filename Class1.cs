@@ -1,7 +1,9 @@
-﻿using DV.MultipleUnit;
+﻿using DV;
+using DV.MultipleUnit;
 using DV.Simulation.Cars;
 using DV.Simulation.Controllers;
 using DV.ThingTypes;
+using DV.UI;
 using DV_UniversalRemoteMUEneabler;
 using HarmonyLib;
 using JetBrains.Annotations;
@@ -67,6 +69,30 @@ namespace DV_UniversalRemoteMUEneabler
             }
         }
 
+        public static bool IsPassengerCar(TrainCar car)
+        {
+            if (car == null) return false;
+            try
+            {
+                if (car.carLivery != null)
+                {
+                    string id = car.carLivery.id != null ? car.carLivery.id.ToLower() : "";
+                    string prefabName = car.carLivery.prefab != null ? car.carLivery.prefab.name.ToLower() : "";
+                    if (id.Contains("passenger") || id.Contains("coach") || prefabName.Contains("passenger") || prefabName.Contains("coach"))
+                    {
+                        return true;
+                    }
+                }
+                string carTypeStr = car.carType.ToString().ToLower();
+                if (carTypeStr.Contains("passenger") || carTypeStr.Contains("coach"))
+                {
+                    return true;
+                }
+            }
+            catch { }
+            return false;
+        }
+
         static void OnGUI(UnityModManager.ModEntry modEntry)
         {
             GUILayout.Label("<b>Enable remote control (MU) for vehicles:</b>");
@@ -100,12 +126,14 @@ namespace DV_UniversalRemoteMUEneabler
             GUILayout.EndVertical();
             GUILayout.Space(20);
 
-            // Rolling Stock / Utility
-            GUILayout.BeginVertical(GUILayout.Width(180));
-            GUILayout.Label("<b>Rolling Stock & Utility</b>");
+            // Rolling Stock & Wagons
+            GUILayout.BeginVertical(GUILayout.Width(250));
+            GUILayout.Label("<b>Rolling Stock & Wagons</b>");
             GUILayout.Space(5);
             settings.Caboose = GUILayout.Toggle(settings.Caboose, " Caboose");
             settings.UtilityFlatcar = GUILayout.Toggle(settings.UtilityFlatcar, " Utility Short Flatcar");
+            settings.PassengerCars = GUILayout.Toggle(settings.PassengerCars, " Passenger Cars ");
+            settings.AllWagons = GUILayout.Toggle(settings.AllWagons, " ALL Wagons & Freight Cars (requires save reload)");
             GUILayout.EndVertical();
             GUILayout.EndHorizontal();
 
@@ -181,6 +209,14 @@ namespace DV_UniversalRemoteMUEneabler
                         __instance.gameObject.AddComponent<DM3GearboxSync>();
                     }
                 }
+                else if (Main.settings.AllWagons && !__instance.IsLoco)
+                {
+                    activateRemoteMU = true;
+                }
+                else if (Main.settings.PassengerCars && Main.IsPassengerCar(__instance))
+                {
+                    activateRemoteMU = true;
+                }
                 else if (carTypeName.Contains("caboose") && Main.settings.Caboose)
                 {
                     activateRemoteMU = true;
@@ -209,6 +245,7 @@ namespace DV_UniversalRemoteMUEneabler
             }
         }
     }
+
     [HarmonyPatch(typeof(MultipleUnitStateObserver), "UpdateFront")]
     public static class MultipleUnitStateObserver_UpdateFront_Patch
     {
@@ -316,6 +353,7 @@ namespace DV_UniversalRemoteMUEneabler
             return false;
         }
     }
+
     [HarmonyPatch(typeof(DV.MultipleUnit.MUControlBlockPropagator), "RecalculateControlBlockFlags")]
     public static class MUControlBlockPropagator_Recalculate_Patch
     {
@@ -333,17 +371,105 @@ namespace DV_UniversalRemoteMUEneabler
             return co != null;
         }
     }
+
     [HarmonyPatch(typeof(TrainCar), "IsMultipleUnit", MethodType.Getter)]
     public static class TrainCar_IsMultipleUnit_Patch
     {
         public static void Postfix(TrainCar __instance, ref bool __result)
         {
-            if (!__result && __instance != null && (__instance.muModule != null || __instance.GetComponent<DummyMUFlag>() != null))
+            if (__result || __instance == null) return;
+            var module = __instance.muModule;
+            if (module != null && module.FrontCable != null && module.RearCable != null)
             {
                 __result = true;
             }
         }
     }
+
+    [HarmonyPatch(typeof(MultipleUnitModule), "DisconnectCablesIfMultipleUnitSupported")]
+    public static class DisconnectCables_Safety_Patch
+    {
+        public static bool Prefix(TrainCar car)
+        {
+            if (car == null) return false;
+
+            if (car.muModule == null || car.muModule.FrontCable == null || car.muModule.RearCable == null)
+            {
+                return false;
+            }
+
+            return true;
+        }
+    }
+
+    [HarmonyPatch(typeof(MultipleUnitModule), "ConnectCablesOfConnectedCouplersIfMultipleUnitSupported")]
+    public static class ConnectCables_Safety_Patch
+    {
+        public static bool Prefix(Coupler coupler1, Coupler coupler2)
+        {
+            if (coupler1 == null || coupler2 == null) return false;
+
+            var car1 = coupler1.train;
+            var car2 = coupler2.train;
+            if (car1 == null || car2 == null) return false;
+
+            if (car1.muModule == null || car1.muModule.FrontCable == null || car1.muModule.RearCable == null ||
+                car2.muModule == null || car2.muModule.FrontCable == null || car2.muModule.RearCable == null)
+            {
+                return false;
+            }
+
+            return true;
+        }
+    }
+
+    [HarmonyPatch(typeof(MainMenu), "LoadGame")]
+    public static class UniversalControlStand_MUPatch
+    {
+        public static void Postfix()
+        {
+            try
+            {
+                if (Globals.G?.Items?.items == null) return;
+                foreach (var item in Globals.G.Items.items)
+                {
+                    if (item != null && item.name == "UniversalControlStand")
+                    {
+                        var gadgetComp = item.gameObject.GetComponent("GadgetItem");
+                        if (gadgetComp != null)
+                        {
+                            var gadgetPrefabProp = gadgetComp.GetType().GetProperty("GadgetPrefab");
+                            var gadgetPrefab = gadgetPrefabProp?.GetValue(gadgetComp) as GameObject;
+                            if (gadgetPrefab != null)
+                            {
+                                var controlPanel = gadgetPrefab.GetComponent("GadgetControlPanel");
+                                if (controlPanel != null)
+                                {
+                                    var reqField = AccessTools.Field(controlPanel.GetType(), "requirements");
+                                    if (reqField != null)
+                                    {
+                                        object reqVal = reqField.GetValue(controlPanel);
+                                        var muSupportField = AccessTools.Field(reqVal.GetType(), "muSupport");
+                                        if (muSupportField != null)
+                                        {
+                                            muSupportField.SetValue(reqVal, true);
+                                            reqField.SetValue(controlPanel, reqVal);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Main.DebugLog($"[Universal Control Stand Patch] Note: {ex.Message}");
+            }
+        }
+    }
+
     public static class CableStateManager
     {
         private static string saveFilePath;
@@ -441,7 +567,6 @@ namespace DV_UniversalRemoteMUEneabler
             if (cable == null) return (null, null);
             if (cableToInfo.TryGetValue(cable, out var info) && info.car != null) return info;
 
-            // Rychlé a spolehlivé zjištění pro všechny vozy a lokomotivy
             if (cable.muModule != null)
             {
                 var car = cable.muModule.train ?? cable.muModule.GetComponent<TrainCar>() ?? cable.muModule.GetComponentInParent<TrainCar>();
@@ -595,6 +720,7 @@ namespace DV_UniversalRemoteMUEneabler
 
             return neighbors;
         }
+
         private List<TrainCar> GetCabledSyncChain(TrainCar startCar)
         {
             var visited = new HashSet<TrainCar>();
@@ -808,6 +934,8 @@ namespace DV_UniversalRemoteMUEneabler
         public bool MOD_LOCO = true;
         public bool Caboose = true;
         public bool UtilityFlatcar = true;
+        public bool PassengerCars = true;
+        public bool AllWagons = false;
 
         public bool enableDebugLog = false;
 
